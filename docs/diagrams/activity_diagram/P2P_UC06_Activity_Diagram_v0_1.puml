@@ -1,0 +1,112 @@
+@startuml UC06_Xem_tim_kiem_tap_tin
+title Activity Diagram — UC-06: Xem/tìm kiếm tập tin
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Người dùng|
+start
+:Nhấn làm mới danh sách hoặc nhập từ khóa tìm kiếm;
+note right
+  Có thể chọn một số peer cụ thể.
+  Nếu không chọn, hệ thống truy vấn tất cả peer đang kết nối (BR-04).
+end note
+
+|React UI|
+if (Từ khóa, nếu có, không vượt quá độ dài cho phép?) then (Có)
+  :Gửi yêu cầu qua API preload / IPC kèm từ khóa và peer đã chọn;
+else (Không)
+  :Hiển thị lỗi từ khóa không hợp lệ;
+  stop
+endif
+
+|Electron Main / Bridge|
+if (Java backend sẵn sàng?) then (Có)
+  :Tạo requestId;
+  :Gửi command files.search qua JSON Lines;
+
+  |Java P2P Core|
+  :Xác thực lại từ khóa và định danh peer;
+  if (Tham số hợp lệ?) then (Có)
+    :Xác định các peer cần truy vấn: peer được chọn hoặc mọi peer đang CONNECTED;
+    if (Có ít nhất một peer cần truy vấn?) then (Có)
+      repeat
+        :Gửi yêu cầu danh sách đến peer kế tiếp theo UC-06a;
+        note right
+          Vẽ tuần tự cho dễ đọc. Khi cài đặt, các peer được truy vấn song song
+          trên luồng nền và mỗi peer có thời hạn chờ riêng (NFR-04, FR-12).
+        end note
+
+        |Peer từ xa|
+        :Xử lý yêu cầu danh sách theo UC-08 và trả metadata;
+
+        |Java P2P Core|
+        if (Nhận phản hồi danh sách hợp lệ trong thời hạn?) then (Có)
+          :Thêm metadata vào kết quả và gắn với peer cung cấp;
+        else (Không)
+          :Ghi nhận lỗi riêng cho peer này và giữ kết quả của các peer khác;
+          note right
+            Lỗi gồm không phản hồi, quá thời hạn, phản hồi sai cấu trúc (NFR-13)
+            hoặc peer trả lỗi (A2, FR-12).
+          end note
+        endif
+      repeat while (Còn peer chưa xử lý?) is (Có) not (Không)
+      if (Có từ khóa tìm kiếm?) then (Có)
+        :Lọc các tập tin có tên khớp từ khóa;
+        note right
+          G-04: khớp khi tên chứa từ khóa, không phân biệt hoa thường.
+          Lọc ở Java vì Java giữ thông tin peer nguồn của từng tập tin.
+        end note
+      else (Không)
+        :Giữ toàn bộ danh sách đã tổng hợp;
+      endif
+      :Trả response kết quả kèm danh sách lỗi theo từng peer;
+    else (Không)
+      :Trả response trạng thái rỗng vì chưa có peer nào đang kết nối;
+    endif
+  else (Không)
+    :Trả response lỗi tham số không hợp lệ;
+  endif
+
+  |Electron Main / Bridge|
+  if (Nhận response trong thời hạn?) then (Có)
+    :Đối chiếu response theo requestId;
+  else (Không)
+    :Tạo kết quả lỗi quá thời hạn và cho phép người dùng thử lại;
+    note right
+      Đây là thao tác chỉ đọc nên gửi lại an toàn, khác với UC-03 và UC-07.
+      Thời hạn của Bridge phải dài hơn thời hạn chờ của từng peer ở Java.
+    end note
+  endif
+else (Không)
+  :Tạo kết quả lỗi backend không khả dụng;
+endif
+
+|React UI|
+if (Nhận được kết quả truy vấn từ Java?) then (Có)
+  if (Có peer đã được truy vấn?) then (Có)
+    if (Có tập tin phù hợp?) then (Có)
+      :Hiển thị danh sách tập tin kèm peer nguồn;
+    else (Không)
+      :Hiển thị trạng thái rỗng vì không có kết quả phù hợp;
+    endif
+    if (Có peer bị lỗi?) then (Có)
+      :Hiển thị lỗi riêng cho từng peer đó và giữ kết quả của peer khác;
+    endif
+  else (Không)
+    :Hiển thị trạng thái rỗng vì chưa có peer nào đang kết nối;
+  endif
+else (Không)
+  :Hiển thị lỗi theo kết quả và giữ danh sách đang hiển thị trước đó;
+endif
+
+stop
+@enduml

@@ -1,0 +1,342 @@
+' System Sequence Diagrams (SSD) cho P2P File Sharing — v0.1
+' Quy ước: hệ thống là một hộp đen duy nhất. Mũi tên liền (->) là system operation,
+' mũi tên đứt (-->) là giá trị trả về, mũi tên mở (->>) là sự kiện bất đồng bộ.
+' Tên operation, tham số và mã lỗi là mức phân tích, chưa phải tên thông điệp giao thức.
+' Mỗi khối @startuml...@enduml là một sơ đồ; PlantUML sẽ sinh nhiều ảnh từ một file.
+
+@startuml SSD_UC01_Khoi_chay_peer
+title SSD — UC-01: Khởi chạy peer
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+
+U -> S : startPeer(port, bindAddress)
+alt Tham số hợp lệ và bind thành công
+  S --> U : peerStatus(RUNNING, bindAddress, port)
+else Peer đã ở trạng thái RUNNING
+  S --> U : peerStatus(RUNNING, bindAddress, port)
+  note right : Thao tác lặp an toàn, không mở thêm listener
+else Cổng không hợp lệ, đang bị chiếm hoặc không đủ quyền
+  S --> U : error(INVALID_PORT / PORT_IN_USE / PERMISSION_DENIED)
+else Backend không sẵn sàng
+  S --> U : error(BACKEND_UNAVAILABLE)
+end
+@enduml
+
+@startuml SSD_UC02_Dung_peer
+title SSD — UC-02: Dừng peer
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+
+U -> S : stopPeer()
+alt Peer đang RUNNING và dọn dẹp thành công
+  loop Mỗi tác vụ truyền nhận đang chạy (D-03)
+    S ->> U : transferStatusChanged(taskId, CANCELLED)
+  end
+  S --> U : peerStatus(STOPPED)
+else Peer đã ở trạng thái STOPPED
+  S --> U : peerStatus(STOPPED)
+else Dọn dẹp gặp lỗi
+  S --> U : error(CLEANUP_FAILED)
+  note right : Không báo STOPPED khi còn tài nguyên đang hoạt động
+end
+@enduml
+
+@startuml SSD_UC03_Ket_noi_peer
+title SSD — UC-03: Kết nối peer
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Peer từ xa" as P
+
+U -> S : connectPeer(host, port)
+alt Địa chỉ hoặc cổng không hợp lệ, hoặc peer cục bộ chưa RUNNING
+  S --> U : error(INVALID_ADDRESS / PEER_NOT_RUNNING)
+else Đã có kết nối tương đương
+  S --> U : connectionStatus(peerId, CONNECTED)
+  note right : Không tạo bản ghi trùng
+else Không mở được kết nối TCP trong thời hạn
+  S --> U : error(CONNECT_TIMEOUT / CONNECTION_REFUSED)
+else Mở được kết nối TCP
+  S -> P : handshake(localPeerInfo)
+  alt Peer từ xa chấp nhận
+    P --> S : handshakeAccepted(remotePeerInfo)
+    S --> U : connectionStatus(peerId, CONNECTED)
+  else Peer từ xa từ chối, gửi thông điệp không hợp lệ hoặc quá thời hạn
+    P --> S : handshakeRejected(reason)
+    S --> U : error(HANDSHAKE_FAILED)
+  end
+end
+@enduml
+
+@startuml SSD_UC04_Ngat_ket_noi_peer
+title SSD — UC-04: Ngắt kết nối peer
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Peer từ xa" as P
+
+U -> S : disconnectPeer(peerId)
+alt Kết nối đang CONNECTED
+  S -> P : closeConnection()
+  S --> U : connectionStatus(peerId, DISCONNECTED)
+else Kết nối đã mất trước đó
+  S --> U : connectionStatus(peerId, DISCONNECTED)
+  note right : Đồng bộ trạng thái, không coi là lỗi
+else peerId không tồn tại
+  S --> U : error(UNKNOWN_PEER)
+end
+@enduml
+
+@startuml SSD_UC05_Chon_thu_muc_chia_se
+title SSD — UC-05: Chọn thư mục chia sẻ
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+
+note over U : Người dùng chọn thư mục qua hộp thoại của hệ điều hành.\nNếu nhấn Hủy thì không có operation nào được gửi.
+U -> S : setSharedDirectory(path)
+alt Thư mục tồn tại, là thư mục và đọc được
+  S --> U : sharedDirectory(path)
+else Cùng thư mục đang chia sẻ
+  S --> U : sharedDirectory(path)
+  note right : Giữ nguyên cấu hình
+else Đường dẫn không hợp lệ hoặc không có quyền đọc
+  S --> U : error(INVALID_DIRECTORY / PERMISSION_DENIED)
+  note right : Giữ cấu hình trước đó
+end
+@enduml
+
+@startuml SSD_UC06_Xem_tim_kiem_tap_tin
+title SSD — UC-06: Xem/tìm kiếm tập tin
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Peer từ xa" as P
+
+U -> S : searchFiles(keyword, peerIds)
+note right : keyword và peerIds đều tùy chọn
+alt Tham số không hợp lệ
+  S --> U : error(INVALID_ARGUMENT)
+else Không có peer nào đang kết nối
+  S --> U : searchResult(files = rỗng, reason = NO_PEERS)
+else Có ít nhất một peer cần truy vấn
+  loop Mỗi peer được truy vấn (UC-06a)
+    S -> P : requestFileList()
+    alt Peer phản hồi hợp lệ
+      P --> S : fileList(files)
+    else Peer trả lỗi, phản hồi sai cấu trúc hoặc không phản hồi
+      P --> S : error(reason)
+    end
+  end
+  S --> U : searchResult(files, peerErrors)
+  note right : files gồm fileName, size, peerId. Có thể rỗng.\npeerErrors liệt kê peer bị lỗi, kết quả của peer khác vẫn giữ.
+end
+@enduml
+
+@startuml SSD_UC07_Tai_tap_tin
+title SSD — UC-07: Tải tập tin
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Peer nguồn" as P
+
+U -> S : downloadFile(peerId, fileName, destinationDir)
+alt Yêu cầu bị từ chối ngay
+  S --> U : error(PEER_NOT_RUNNING / PEER_NOT_CONNECTED / INVALID_DESTINATION)
+else Yêu cầu được chấp nhận
+  S --> U : downloadAccepted(taskId, targetFileName)
+  note right : targetFileName có thể khác fileName nếu tên đã tồn tại (D-05)
+  S -> P : requestFile(fileName)
+  alt Peer nguồn cung cấp được tập tin
+    P --> S : fileMetadata(size, sha256)
+    alt Metadata hợp lệ và đủ dung lượng trống
+      loop Cho đến khi nhận đủ dữ liệu hoặc gặp lỗi
+        P ->> S : fileData(chunk)
+        S ->> U : transferProgress(taskId, receivedBytes, totalBytes)
+      end
+      alt Nhận đủ và SHA-256 khớp (UC-07a)
+        S ->> U : transferStatusChanged(taskId, COMPLETED, savedPath)
+      else Dữ liệu không hợp lệ, peer nguồn ngắt kết nối hoặc lỗi ghi
+        S ->> U : transferStatusChanged(taskId, FAILED, reason)
+      end
+    else Metadata không hợp lệ hoặc không đủ dung lượng
+      S ->> U : transferStatusChanged(taskId, FAILED, reason)
+    end
+  else Peer nguồn trả lỗi
+    P --> S : error(FILE_UNAVAILABLE)
+    S ->> U : transferStatusChanged(taskId, FAILED, FILE_UNAVAILABLE)
+  end
+end
+@enduml
+
+@startuml SSD_UC07_A5_Huy_tai
+title SSD — UC-07, nhánh A5: Hủy tải
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Người dùng" as U
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Peer nguồn" as P
+
+U -> S : cancelDownload(taskId)
+alt Tác vụ đang PENDING hoặc DOWNLOADING
+  S --> U : cancelRequested(taskId)
+  S -> P : cancelTransfer()
+  note right : Thông báo cho peer nguồn nếu kết nối còn
+  S ->> U : transferStatusChanged(taskId, CANCELLED)
+else Tác vụ đã kết thúc
+  S --> U : error(TASK_ALREADY_FINISHED)
+else taskId không tồn tại
+  S --> U : error(UNKNOWN_TASK)
+end
+@enduml
+
+@startuml SSD_UC08_Cung_cap_tap_tin
+title SSD — UC-08: Cung cấp tập tin cho peer
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Peer từ xa" as P
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Người dùng" as U
+
+P -> S : requestFileList()
+alt Peer đang RUNNING và đã có thư mục chia sẻ
+  S --> P : fileList(files)
+  note right : Chỉ tập tin cấp đầu của thư mục chia sẻ (D-01)
+else Không thể phục vụ lúc này
+  S --> P : error(NOT_SHARING)
+end
+
+P -> S : requestFile(fileName)
+alt Tên hợp lệ, tập tin nằm trực tiếp trong thư mục chia sẻ và đọc được
+  S --> P : fileMetadata(size, sha256)
+  loop Cho đến khi gửi đủ hoặc bị dừng
+    S ->> P : fileData(chunk)
+  end
+else Tên tập tin không hợp lệ
+  S --> P : error(INVALID_REQUEST)
+else Tập tin không khả dụng
+  S --> P : error(FILE_UNAVAILABLE)
+  note right : Mã lỗi chung cho không tồn tại, ngoài phạm vi và không đọc được (G-03)
+end
+S ->> U : activityLogged(entry)
+@enduml
+
+@startuml SSD_UC12_Chap_nhan_ket_noi_den
+title SSD — UC-12: Chấp nhận kết nối đến
+skinparam shadowing false
+skinparam sequenceMessageAlign left
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ActorBackgroundColor #F8FAFC
+  ArrowColor #334155
+  LifeLineBorderColor #94A3B8
+  FontName Arial
+}
+hide footbox
+
+actor "Peer từ xa" as P
+participant "Hệ thống\nP2P File Sharing" as S
+actor "Người dùng" as U
+
+P -> S : handshake(remotePeerInfo)
+alt Peer đang RUNNING và handshake hợp lệ
+  S --> P : handshakeAccepted(localPeerInfo)
+  S ->> U : connectionStatusChanged(peerId, CONNECTED)
+else Đã có kết nối tương đương
+  S --> P : handshakeAccepted(localPeerInfo)
+  note right : Không tạo bản ghi trùng. Quy tắc xác định tương đương\nvà kết nối chéo đồng thời do protocol.md quyết định.
+else Handshake sai, quá thời hạn hoặc peer đang dừng
+  S --> P : handshakeRejected(reason)
+  S ->> U : activityLogged(entry)
+end
+@enduml

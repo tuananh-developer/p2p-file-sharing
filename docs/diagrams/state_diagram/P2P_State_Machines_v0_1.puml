@@ -1,0 +1,144 @@
+' State Machine Diagrams — P2P File Sharing — v0.1
+' Mỗi khối @startuml...@enduml là một sơ đồ; PlantUML sinh nhiều ảnh từ một file.
+' Nhãn chuyển trạng thái theo dạng: sự kiện [điều kiện] / hành động.
+
+@startuml SM_Peer
+title State Machine — Peer (cục bộ)
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  ArrowColor #334155
+  FontName Arial
+}
+hide empty description
+
+[*] --> STOPPED
+
+STOPPED --> STARTING : startPeer [tham số hợp lệ] / bind cổng
+STOPPED --> STOPPED : stopPeer / trả trạng thái hiện tại
+STARTING --> RUNNING : bind thành công / bắt đầu vòng accept
+STARTING --> STOPPED : bind thất bại / giải phóng tài nguyên đã mở
+RUNNING --> RUNNING : startPeer / trả trạng thái hiện tại
+RUNNING --> STOPPING : stopPeer / ngừng nhận kết nối mới
+STOPPING --> STOPPED : dọn dẹp xong
+STOPPING --> STOPPING : dọn dẹp lỗi / ghi log, không báo STOPPED
+
+RUNNING : chấp nhận Connection mới (UC-12)
+RUNNING : phục vụ yêu cầu của peer khác (UC-08)
+STOPPING : đóng listener
+STOPPING : hủy các tác vụ truyền nhận (D-03)
+STOPPING : đóng các kết nối
+
+note bottom of STOPPING
+  startPeer hoặc stopPeer khi đang STARTING hoặc STOPPING
+  chưa được định nghĩa. Cách xử lý khi dọn dẹp lỗi cũng chưa chốt
+  (SRS mục 10.3).
+end note
+
+note right of STOPPED
+  Mất Java backend (FR-24) không phải trạng thái của Peer.
+  Giao diện hiển thị trạng thái lỗi riêng.
+end note
+@enduml
+
+@startuml SM_Connection
+title State Machine — Connection
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  ArrowColor #334155
+  FontName Arial
+}
+hide empty description
+
+[*] --> CONNECTING : connectPeer (OUTGOING) hoặc nhận kết nối TCP (INCOMING)
+
+CONNECTING --> CONNECTED : handshake được chấp nhận / thêm peer vào danh sách
+CONNECTING --> DISCONNECTED : TCP lỗi, handshake bị từ chối, sai hoặc quá thời hạn / đóng socket
+CONNECTED --> DISCONNECTED : disconnectPeer / closeConnection
+CONNECTED --> DISCONNECTED : peer từ xa đóng kết nối hoặc lỗi I/O (FR-07)
+CONNECTED --> DISCONNECTED : stopPeer (D-03)
+DISCONNECTED --> [*]
+
+CONNECTING : trạng thái tạm thời
+CONNECTING : chưa xuất hiện trong danh sách peer
+DISCONNECTED : phát connectionStatusChanged
+DISCONNECTED : TransferTask phụ thuộc chuyển FAILED hoặc CANCELLED (BR-08)
+
+note right of DISCONNECTED
+  Đề xuất: người dùng chủ động ngắt hoặc dừng peer thì tác vụ
+  chuyển CANCELLED. Mất kết nối ngoài ý muốn thì chuyển FAILED
+  (SRS mục 10.3).
+end note
+@enduml
+
+@startuml SM_DownloadTask
+title State Machine — DownloadTask
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  ArrowColor #334155
+  FontName Arial
+}
+hide empty description
+
+[*] --> PENDING : downloadFile được chấp nhận
+
+PENDING --> DOWNLOADING : metadata hợp lệ và đủ dung lượng / tạo tệp tạm
+PENDING --> FAILED : peer nguồn trả lỗi, metadata không hợp lệ, không đủ dung lượng hoặc mất kết nối
+PENDING --> CANCELLED : cancelDownload hoặc stopPeer
+
+DOWNLOADING --> DOWNLOADING : nhận khối dữ liệu / ghi tệp tạm, phát transferProgress
+DOWNLOADING --> VERIFYING : nhận đủ số byte kỳ vọng
+DOWNLOADING --> FAILED : mất kết nối, quá thời hạn, lỗi I/O hoặc đầy ổ đĩa / xóa tệp tạm
+DOWNLOADING --> CANCELLED : cancelDownload hoặc stopPeer / xóa tệp tạm
+
+VERIFYING --> COMPLETED : kích thước và SHA-256 khớp / đổi tên tệp tạm, không ghi đè
+VERIFYING --> FAILED : kích thước hoặc SHA-256 không khớp / xóa tệp tạm
+
+COMPLETED --> [*]
+FAILED --> [*]
+CANCELLED --> [*]
+
+VERIFYING : dữ liệu đã nhận đủ nên không còn phụ thuộc kết nối
+
+note bottom of VERIFYING
+  cancelDownload khi đang VERIFYING chưa được định nghĩa.
+  Đề xuất: không hủy được vì bước kiểm tra ngắn (SRS mục 10.3).
+end note
+
+note right of COMPLETED
+  BR-06: chỉ đạt trạng thái này sau khi kiểm tra toàn vẹn thành công.
+end note
+@enduml
+
+@startuml SM_UploadTask
+title State Machine — UploadTask (phía peer nguồn)
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  ArrowColor #334155
+  FontName Arial
+}
+hide empty description
+
+[*] --> SERVING : yêu cầu tải hợp lệ / gửi metadata và dữ liệu
+
+SERVING --> SERVING : gửi khối dữ liệu
+SERVING --> COMPLETED : gửi đủ dữ liệu
+SERVING --> FAILED : mất kết nối hoặc lỗi đọc tập tin (BR-08)
+SERVING --> CANCELLED : peer yêu cầu hủy hoặc stopPeer (D-03)
+
+COMPLETED --> [*]
+FAILED --> [*]
+CANCELLED --> [*]
+
+note right of SERVING
+  Yêu cầu không hợp lệ hoặc tập tin không khả dụng bị từ chối
+  ngay bằng phản hồi lỗi (G-03), không tạo UploadTask.
+end note
+@enduml

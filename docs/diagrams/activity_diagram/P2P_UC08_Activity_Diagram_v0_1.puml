@@ -1,0 +1,105 @@
+@startuml UC08_Cung_cap_tap_tin_cho_peer
+title Activity Diagram — UC-08: Cung cấp tập tin cho peer
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Peer từ xa / Peer yêu cầu|
+start
+:Gửi yêu cầu danh sách hoặc tải tập tin qua kết nối TCP đã thiết lập;
+note right
+  Kết nối có được nhờ UC-03 (peer hiện tại kết nối đi)
+  hoặc UC-12 (peer hiện tại nhận kết nối đến).
+end note
+
+|Java P2P Core / Peer nguồn|
+:Đọc dữ liệu từ socket và ghép thành thông điệp hoàn chỉnh theo framing;
+note right
+  NFR-11: không giả định một lần đọc socket là một thông điệp.
+  Việc phục vụ chạy ở luồng nền để không chặn các kết nối khác (NFR-06).
+end note
+if (Thông điệp hợp lệ về cấu trúc, kiểu dữ liệu và kích thước?) then (Có)
+  if (Peer đang RUNNING và đã cấu hình thư mục chia sẻ?) then (Có)
+    if (Yêu cầu danh sách?) then (Có)
+      :Lấy các tập tin thường ở cấp đầu của thư mục chia sẻ;
+      note right
+        D-01: không duyệt đệ quy thư mục con.
+      end note
+      :Tạo metadata gồm tên và kích thước, không có đường dẫn tuyệt đối;
+      :Gửi phản hồi danh sách;
+    elseif (Yêu cầu tải tập tin?) then (Có)
+      if (Tên tập tin hợp lệ?) then (Có)
+        :Ghép tên với thư mục chia sẻ và chuẩn hóa về đường dẫn thật;
+        note right
+          D-02: tên không rỗng, không chứa dấu phân tách đường dẫn,
+          không chứa .. hoặc ký tự NUL. Đường dẫn tuyệt đối từ mạng
+          không bao giờ được dùng.
+        end note
+        if (Tập tin thường nằm trực tiếp trong thư mục chia sẻ và đọc được?) then (Có)
+          :Gửi metadata gồm kích thước và SHA-256;
+          note right
+            Thời điểm gửi SHA-256 do docs/protocol.md quyết định (G-02).
+          end note
+          repeat
+            :Đọc khối tiếp theo từ tập tin và gửi qua TCP;
+            if (Đọc và gửi thành công?) then (Có)
+              :Cập nhật số byte đã gửi;
+            else (Không)
+              :Ghi nhận nguyên nhân dừng;
+              note right
+                Nguyên nhân gồm peer yêu cầu hủy hoặc ngắt kết nối (BR-08),
+                lỗi đọc tập tin, hoặc peer cục bộ đang dừng (D-03).
+              end note
+            endif
+          repeat while (Còn dữ liệu và việc phục vụ chưa dừng?) is (Có) not (Không)
+          if (Đã gửi đủ dữ liệu?) then (Có)
+            :Đánh dấu phục vụ thành công;
+          else (Không)
+            :Đóng luồng dữ liệu và giải phóng tài nguyên;
+            :Đánh dấu phục vụ thất bại kèm nguyên nhân;
+          endif
+        else (Không)
+          :Trả phản hồi lỗi tập tin không khả dụng;
+          note right
+            G-03: dùng một mã lỗi chung cho tập tin không tồn tại, ngoài phạm vi
+            và không đọc được, để peer lạ không dò được cấu trúc thư mục.
+            Lý do chi tiết chỉ ghi ở log cục bộ.
+          end note
+        endif
+      else (Không)
+        :Trả phản hồi lỗi tên tập tin không hợp lệ;
+      endif
+    else (Loại yêu cầu khác)
+      :Trả phản hồi lỗi loại yêu cầu không được hỗ trợ;
+    endif
+  else (Không)
+    :Trả phản hồi lỗi peer không thể phục vụ lúc này;
+  endif
+else (Không)
+  :Trả phản hồi lỗi yêu cầu không hợp lệ;
+  :Đóng kết nối nếu không xác định được ranh giới thông điệp;
+endif
+
+|Peer từ xa / Peer yêu cầu|
+:Nhận phản hồi, dữ liệu hoặc lỗi và xử lý tiếp theo UC-06a hoặc UC-07;
+
+|Java P2P Core / Peer nguồn|
+:Ghi log kết quả xử lý yêu cầu, không ghi nội dung tập tin;
+:Phát sự kiện hoạt động;
+
+|Electron Main / Bridge|
+:Chuyển sự kiện đến giao diện;
+
+|React UI|
+:Hiển thị trong nhật ký hoạt động (UC-09);
+
+stop
+@enduml

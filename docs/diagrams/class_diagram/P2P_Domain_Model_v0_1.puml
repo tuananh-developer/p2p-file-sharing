@@ -1,0 +1,125 @@
+@startuml P2P_Domain_Model
+title Domain Model — P2P File Sharing (mức khái niệm)
+
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  ArrowColor #334155
+  FontName Arial
+}
+hide methods
+hide empty members
+
+class "Peer (cục bộ)" as Peer {
+  status : PeerStatus
+  bindAddress
+  port
+}
+
+class RemotePeer {
+  peerId
+  address
+  listeningPort
+}
+
+class Connection {
+  direction : ConnectionDirection
+  status : ConnectionStatus
+}
+
+class SharedDirectory {
+  path
+}
+
+class SharedFile {
+  fileName
+  size
+}
+
+class FileSearch {
+  keyword
+}
+
+class PeerQuery {
+  outcome : QueryOutcome
+  failureReason
+}
+
+class RemoteFile {
+  fileName
+  size
+}
+
+abstract class TransferTask {
+  taskId
+  fileName
+  totalBytes
+  transferredBytes
+  failureReason
+}
+
+class DownloadTask {
+  status : DownloadStatus
+  targetFileName
+  destinationDir
+  expectedSha256
+}
+
+class UploadTask {
+  status : UploadStatus
+}
+
+class ActivityLogEntry {
+  timestamp
+  eventType
+  message
+}
+
+Peer "1" -- "0..*" Connection : có >
+Connection "0..*" -- "1" RemotePeer : với >
+
+Peer "1" -- "0..1" SharedDirectory : chia sẻ >
+SharedDirectory "1" *-- "0..*" SharedFile : chứa >
+
+Peer "1" -- "0..*" TransferTask : thực hiện >
+TransferTask "0..*" -- "1" RemotePeer : đối tác >
+TransferTask <|-- DownloadTask
+TransferTask <|-- UploadTask
+
+Peer "1" -- "0..*" FileSearch : thực hiện >
+FileSearch "1" *-- "0..*" PeerQuery : gồm >
+PeerQuery "0..*" -- "1" RemotePeer : truy vấn >
+PeerQuery "1" *-- "0..*" RemoteFile : trả về >
+
+Peer "1" -- "0..*" ActivityLogEntry : ghi >
+
+note right of Connection
+  Mỗi RemotePeer có tối đa một Connection
+  đang CONNECTED với Peer (UC-03 A3, UC-12 A3).
+  Cách xác định "cùng một peer" còn mở.
+end note
+
+note bottom of SharedDirectory
+  Chỉ tập tin thường ở cấp đầu (D-01).
+  Chỉ tồn tại trong phiên chạy (D-04).
+end note
+
+note right of DownloadTask
+  COMPLETED chỉ khi nhận đủ dữ liệu
+  và SHA-256 khớp (BR-06).
+  targetFileName không trùng tập tin
+  có sẵn ở thư mục đích (D-05).
+end note
+
+legend right
+  PeerStatus: STOPPED, STARTING, RUNNING, STOPPING
+  ConnectionStatus: CONNECTING, CONNECTED, DISCONNECTED
+  ConnectionDirection: OUTGOING, INCOMING
+  QueryOutcome: SUCCESS, FAILED
+  DownloadStatus: PENDING, DOWNLOADING, VERIFYING,
+                  COMPLETED, FAILED, CANCELLED
+  UploadStatus: SERVING, COMPLETED, FAILED, CANCELLED
+end legend
+@enduml
