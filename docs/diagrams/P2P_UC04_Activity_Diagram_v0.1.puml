@@ -1,0 +1,82 @@
+@startuml Activity Diagram - UC-04: Ngat ket noi peer
+title Activity Diagram - UC-04: Ngat ket noi peer
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Nguoi dung|
+start
+:Chon peer can ngat ket noi;
+:Nhan Disconnect;
+
+|React UI|
+if (Da chon peer?) then (Co)
+  :Gui yeu cau ngat ket noi qua preload / IPC;
+else (Khong)
+  :Thong bao can chon peer;
+  stop
+endif
+
+|Electron Main / Bridge|
+if (Java backend san sang?) then (Co)
+  :Tao requestId;
+  :Gui command peer.disconnect qua JSON Lines;
+
+  |Java P2P Core|
+  :Tim peer trong danh sach quan ly;
+  if (Tim thay peer?) then (Co)
+    if (Peer dang CONNECTED?) then (Co)
+      :Chuyen trang thai sang DISCONNECTING;
+      :Dong TCP socket cua peer da chon;
+      :Don dep tai nguyen va tac vu phu thuoc theo chinh sach;
+      if (Ket noi da dong va trang thai da dong bo?) then (Co)
+        :Cap nhat trang thai DISCONNECTED;
+        :Phat su kien trang thai DISCONNECTED;
+        :Tra response thanh cong;
+      else (Khong)
+        :Ghi log loi dong ket noi / don dep;
+        :Dong bo trang thai theo ket noi thuc te;
+        :Tra response that bai kem trang thai thuc te;
+      endif
+    else (Khong)
+      :Dong bo trang thai thanh DISCONNECTED;
+      :Don dep socket neu van con tai nguyen;
+      :Phat su kien neu trang thai thay doi;
+      :Tra response peer da ngat ket noi;
+    endif
+  else (Khong)
+    :Tra response peer khong ton tai trong danh sach quan ly;
+  endif
+
+  |Electron Main / Bridge|
+  if (Nhan response trong thoi han?) then (Co)
+    :Doi chieu response theo requestId;
+  else (Khong)
+    :Danh dau ket qua chua xac dinh;
+    :Truy van lai trang thai peer tu Java;
+  endif
+else (Khong)
+  :Tao ket qua loi backend khong kha dung;
+endif
+
+|React UI|
+:Nhan response va/hoac su kien trang thai;
+if (Trang thai thuc te la DISCONNECTED?) then (Co)
+  :Cap nhat peer tren giao dien la DISCONNECTED;
+  :Thong bao da ngat ket noi;
+else (Khong / chua xac minh)
+  :Hien thi loi hoac trang thai chua xac minh;
+  :Khong tu danh dau peer da ngat ket noi;
+endif
+
+stop
+@enduml

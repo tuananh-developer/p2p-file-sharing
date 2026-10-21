@@ -1,0 +1,92 @@
+@startuml UC05_Chon_thu_muc_chia_se
+title Activity Diagram — UC-05: Chọn thư mục chia sẻ
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Người dùng|
+start
+:Mở chức năng chọn thư mục chia sẻ;
+
+|React UI|
+:Gửi yêu cầu mở hộp thoại qua API preload / IPC;
+
+|Electron Main / Bridge|
+:Mở hộp thoại chọn thư mục của hệ điều hành;
+
+|Người dùng|
+:Chọn thư mục hoặc nhấn Hủy;
+
+|Electron Main / Bridge|
+if (Người dùng đã chọn thư mục?) then (Có)
+  :Kiểm tra thư mục tồn tại, là thư mục và có quyền đọc;
+  if (Thư mục hợp lệ?) then (Có)
+    if (Java backend sẵn sàng?) then (Có)
+      :Tạo requestId;
+      :Gửi command share.setDirectory qua JSON Lines;
+
+      |Java P2P Core|
+      :Xác thực lại đường dẫn\n(chuẩn hóa về đường dẫn thật, là thư mục, có quyền đọc);
+      note right
+        Java là nơi quyết định cuối cùng.
+        Kiểm tra ở Electron chỉ để phản hồi nhanh.
+        Đường dẫn đã chuẩn hóa là cơ sở để UC-08
+        chặn truy cập vượt phạm vi chia sẻ (NFR-12).
+      end note
+      if (Cấu hình hợp lệ?) then (Có)
+        if (Trùng thư mục đang chia sẻ?) then (Có)
+          :Giữ nguyên cấu hình, không áp dụng lại;
+        else (Không)
+          :Áp dụng thư mục chia sẻ mới;
+          note right
+            Điểm cần chốt trước khi triển khai:
+            - Có lưu cấu hình qua các lần khởi động không?
+            - Chia sẻ thư mục con hay chỉ cấp đầu?
+            - Đang phục vụ yêu cầu UC-08 mà đổi thư mục
+              thì hoàn tất hay hủy các yêu cầu đó?
+          end note
+          :Ghi log và phát sự kiện thay đổi thư mục chia sẻ;
+        endif
+        :Trả response thành công kèm thư mục đang áp dụng;
+      else (Không)
+        :Giữ cấu hình trước đó;
+        :Trả response lỗi cấu hình;
+      endif
+
+      |Electron Main / Bridge|
+      if (Nhận response trong thời hạn?) then (Có)
+        :Đối chiếu response theo requestId;
+      else (Không)
+        :Đánh dấu kết quả chưa xác định;
+        :Truy vấn thư mục chia sẻ hiện tại từ Java;
+      endif
+    else (Không)
+      :Tạo kết quả lỗi backend không khả dụng;
+    endif
+  else (Không)
+    :Tạo kết quả lỗi thư mục không hợp lệ hoặc không có quyền đọc;
+  endif
+else (Hủy)
+  :Tạo kết quả đã hủy, không gửi yêu cầu đến Java;
+endif
+
+|React UI|
+:Nhận kết quả hoặc cấu hình đã đồng bộ;
+if (Java xác nhận thư mục mới đang được áp dụng?) then (Có)
+  :Hiển thị thư mục chia sẻ hiện tại;
+  :Thông báo cập nhật thành công;
+else (Không / hủy / chưa xác minh)
+  :Giữ hiển thị cấu hình trước đó;
+  :Thông báo theo kết quả: hủy thì không báo lỗi, lỗi thì nêu lý do, chưa xác minh thì nói rõ;
+endif
+
+stop
+@enduml
