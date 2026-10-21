@@ -1,0 +1,91 @@
+@startuml
+ title Activity Diagram — UC-01: Khởi chạy peer
+
+ skinparam shadowing false
+ skinparam activity {
+   BackgroundColor #F8FAFC
+   BorderColor #475569
+   DiamondBackgroundColor #E2E8F0
+   DiamondBorderColor #475569
+   StartColor #16A34A
+   EndColor #DC2626
+   FontName Arial
+ }
+
+ start
+
+ partition "Người dùng" {
+   :Nhập cổng lắng nghe;
+   :Chọn địa chỉ/interface nếu được hỗ trợ;
+   :Nhấn **Start Peer**;
+ }
+
+ partition "React UI" {
+   :Kiểm tra đầu vào cơ bản;
+   if (Đầu vào hợp lệ?) then (Có)
+     :Gửi yêu cầu qua API preload / IPC;
+   else (Không)
+     :Hiển thị lỗi đầu vào;
+     stop
+   endif
+ }
+
+ partition "Electron Main / Bridge" {
+   if (Java backend đang sẵn sàng?) then (Có)
+     :Tạo requestId;
+     :Gửi command peer.start qua JSON Lines;
+   else (Không)
+     :Tạo kết quả lỗi backend không khả dụng;
+   endif
+ }
+
+ if (Command đã được gửi đến Java?) then (Có)
+   partition "Java P2P Core" {
+     if (Peer đã RUNNING?) then (Có)
+       :Không tạo listener thứ hai;
+       :Trả trạng thái hiện tại;
+     else (Chưa)
+       :Kiểm tra lại cổng và địa chỉ;
+       if (Cấu hình hợp lệ?) then (Có)
+         :Tạo socket lắng nghe;
+         if (Bind socket thành công?) then (Có)
+           :Khởi chạy vòng lặp accept ở luồng nền;
+           :Cập nhật trạng thái RUNNING;
+           :Trả response thành công;
+         else (Không)
+           :Đóng tài nguyên đã tạo một phần;
+           :Trả lỗi bind thất bại / cổng bị chiếm;
+         endif
+       else (Không)
+         :Trả lỗi cấu hình không hợp lệ;
+       endif
+     endif
+   }
+   partition "Electron Main / Bridge" {
+     if (Nhận response trong thời hạn?) then (Có)
+       :Ghi nhận response theo requestId;
+     else (Không)
+       :Đánh dấu kết quả chưa xác định;
+       :Truy vấn trạng thái peer từ Java;
+     endif
+   }
+ else (Không)
+   partition "Electron Main / Bridge" {
+     :Không chờ response Java;
+     :Giữ kết quả lỗi backend;
+   }
+ endif
+
+ partition "React UI" {
+   :Nhận kết quả hoặc trạng thái đã đồng bộ;
+   if (Trạng thái thực tế được xác nhận là RUNNING?) then (Có)
+     :Hiển thị **Running** và địa chỉ/cổng;
+     :Vô hiệu hóa hoặc đổi trạng thái nút Start;
+     stop
+   else (Không / chưa xác minh)
+     :Hiển thị lỗi hoặc trạng thái chưa xác minh;
+     :Không tự đánh dấu Running;
+     stop
+   endif
+ }
+@enduml
