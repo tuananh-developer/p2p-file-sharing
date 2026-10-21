@@ -1,4 +1,4 @@
-@startuml
+@startuml Activity Diagram — UC-01: Khởi chạy peer
  title Activity Diagram — UC-01: Khởi chạy peer
 
  skinparam shadowing false
