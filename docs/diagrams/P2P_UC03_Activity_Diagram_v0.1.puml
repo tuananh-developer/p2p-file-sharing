@@ -1,0 +1,67 @@
+@startuml Activity Diagram - UC-03: Ket noi peer
+title Activity Diagram - UC-03: Ket noi peer
+
+skinparam classAttributeIconSize 0
+
+|Nguoi dung|
+start
+:Chon "Connect";
+:Nhap dia chi IP/hostname va cong cua peer dich;
+
+|React UI / Electron|
+:Kiem tra du lieu dau vao co rong khong;
+if (Du lieu hop le?) then (Co)
+  :Gui lenh CONNECT_PEER qua Electron bridge;
+else (Khong)
+  :Hien thi loi dia chi/cong khong hop le;
+  stop
+endif
+
+|Java P2P Core|
+:Kiem tra peer cuc bo dang RUNNING;
+if (Peer cuc bo dang chay?) then (Co)
+  :Kiem tra dia chi va cong dich;
+  if (Dia chi va cong hop le?) then (Co)
+    :Kiem tra da co ket noi den peer nay chua;
+    if (Da ket noi?) then (Co)
+      :Tra ve trang thai da ket noi;
+      |React UI / Electron|
+      :Cap nhat giao dien, khong tao ket noi trung;
+      stop
+    else (Chua)
+      :Mo TCP socket voi timeout huu han;
+      if (Ket noi TCP thanh cong?) then (Co)
+        :Thuc hien handshake theo giao thuc;
+        if (Handshake hop le?) then (Co)
+          :Them peer vao danh sach quan ly;
+          :Phat su kien trang thai CONNECTED;
+          :Tra ve ket qua thanh cong;
+          |React UI / Electron|
+          :Cap nhat danh sach peer;
+          :Hien thi ket noi thanh cong;
+        else (Khong)
+          :Dong socket;
+          :Tra ve loi handshake/ thong diep khong hop le;
+          |React UI / Electron|
+          :Hien thi loi ket noi;
+        endif
+      else (Khong)
+        :Dong/ don dep socket neu can;
+        :Tra ve loi ket noi hoac timeout;
+        |React UI / Electron|
+        :Hien thi khong the ket noi den peer dich;
+      endif
+    endif
+  else (Khong)
+    :Tra ve loi dia chi hoac cong khong hop le;
+    |React UI / Electron|
+    :Hien thi loi dau vao;
+  endif
+else (Khong)
+  :Tra ve loi peer cuc bo chua RUNNING;
+  |React UI / Electron|
+  :Thong bao can khoi chay peer truoc;
+endif
+
+stop
+@enduml
