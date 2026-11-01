@@ -602,7 +602,6 @@ public final class TransferService implements AutoCloseable {
                 throw new PeerException("TRANSFER_CANCELLED", "The download was cancelled.");
             }
             moveToNonConflictingTarget(task);
-            deletePartQuietly(task.resumeManifestPath);
             task.status = TransferStatus.COMPLETED;
             task.detail = "Download completed and SHA-256 verified.";
             publishStatus(task, task.detail);
@@ -619,13 +618,8 @@ public final class TransferService implements AutoCloseable {
                 Path oldTarget = task.targetPath;
                 Path oldPart = task.partPath;
                 ReservedTarget next = reserveNextTarget(task.destination, task.fileName);
-                Path oldManifest = task.resumeManifestPath;
-                Path nextManifest = ResumeManifestStore.manifestPath(next.partPath);
                 try {
                     Files.move(oldPart, next.partPath);
-                    if (oldManifest != null && Files.exists(oldManifest, LinkOption.NOFOLLOW_LINKS)) {
-                        Files.move(oldManifest, nextManifest, StandardCopyOption.REPLACE_EXISTING);
-                    }
                 } catch (FileAlreadyExistsException partCollision) {
                     releaseTargetPath(next.targetPath);
                     continue;
@@ -637,7 +631,6 @@ public final class TransferService implements AutoCloseable {
                     reservedTargets.remove(oldTarget);
                     task.targetPath = next.targetPath;
                     task.partPath = next.partPath;
-                    task.resumeManifestPath = nextManifest;
                     task.targetFileName = next.fileName;
                 }
                 publishStatus(task, "Destination name was taken; retrying with " + next.fileName + ".");
