@@ -2,7 +2,7 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core đã có vòng đời peer, file catalog và tải file SHA-256; Electron/React desktop shell đã được tích hợp ở mức MVP. Resume, tải đa nguồn và xác thực/mã hóa peer chưa thuộc phạm vi hiện tại.
+> **Trạng thái:** Java Core đã có vòng đời peer, file catalog, tải file SHA-256 và tải nhiều nguồn theo range; Electron/React desktop shell đã được tích hợp ở mức MVP. Resume sau khi khởi động lại và xác thực/mã hóa peer chưa thuộc phạm vi hiện tại.
 
 ## Tech stack
 
@@ -104,6 +104,15 @@ Theo dõi hoặc hủy tác vụ:
 
 File được ghi vào `.part`, xác minh kích thước và SHA-256 rồi mới đổi tên. Tên đích trùng được tự động đổi thành `name (1).ext`; file hiện hữu không bị ghi đè.
 
+
+Tải file theo nhiều nguồn: truyền danh sách peerIds có cùng file. Java sẽ kiểm tra SHA-256 giữa các nguồn, chia file thành các range 4 MiB, tải tối đa tám range đồng thời và tự thử peer khác nếu một nguồn lỗi:
+
+```json
+{"id":"multi-download-1","command":"transfer.downloadMulti","payload":{"peerIds":["<peer-uuid-1>","<peer-uuid-2>"],"fileName":"dataset.bin","destinationDir":"/home/user/Downloads"}}
+```
+
+Các peer phải trả về cùng kích thước và SHA-256; hệ thống không ghép dữ liệu từ hai file khác nội dung chỉ vì trùng tên. Tất cả các range phải đầy đủ và hash của file sau ghép phải hợp lệ trước khi đổi tên file tạm.
+
 Kết nối đến peer khác:
 
 ```json
@@ -189,7 +198,7 @@ Asynchronous event:
 {"type":"event","event":"connectionStatusChanged","data":{"peerId":"...","status":"CONNECTED"}}
 ```
 
-Supported commands: `peer.start`, `peer.stop`, `peer.connect`, `peer.disconnect`, `peer.status`, `peer.list`, `share.setDirectory`, `share.getDirectory`, `files.listLocal`, `files.listRemote`, `files.search`, `transfer.download`, `transfer.cancel`, `transfer.list`, `app.shutdown`. Legacy operation names (`startPeer`, `stopPeer`, `setSharedDirectory`, `searchFiles`, `downloadFile`, etc.) are accepted as aliases.
+Supported commands: `peer.start`, `peer.stop`, `peer.connect`, `peer.disconnect`, `peer.status`, `peer.list`, `share.setDirectory`, `share.getDirectory`, `files.listLocal`, `files.listRemote`, `files.search`, `transfer.download`, `transfer.downloadMulti`, `transfer.cancel`, `transfer.list`, `app.shutdown`. Legacy operation names (`startPeer`, `stopPeer`, `setSharedDirectory`, `searchFiles`, `downloadFile`, etc.) are accepted as aliases.
 
 See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection framing contract.
 
@@ -208,8 +217,10 @@ MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connec
 - [x] Resource cleanup on peer stop / application shutdown
 - [x] Session-scoped shared directory selection and safe top-level file listing
 - [x] Remote file-list requests, case-insensitive search and per-peer error isolation
-- [x] Single-file transfers, progress reporting, cancellation and SHA-256 verification
+- [x] Single-source and multi-source ranged transfers, per-range progress, cancellation and final SHA-256 verification
 - [x] Electron Java process lifecycle, startup readiness, correlated responses and shutdown cleanup
 - [x] Allowlisted preload/IPC boundary and backend-failure events
 - [x] React UI for peer lifecycle, shared directory, search, download progress and cancellation
-- [ ] Verify desktop packaging on Fedora through a full manual two-instance LAN test
+- [x] Split files into 4 MiB ranges and transfer ranges from multiple peers (FR-26–FR-27)
+- [ ] Persistent resume after restart (FR-28)
+- [ ] Verify desktop packaging on Fedora through a full manual multi-peer LAN test

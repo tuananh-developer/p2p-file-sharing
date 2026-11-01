@@ -47,7 +47,7 @@ Preload exposes typed methods only:
 - Peer: start, stop, get local status, list, connect, disconnect.
 - Share: choose a directory using a native dialog, get configuration, list local files.
 - Files: list one peer's files and search connected peers.
-- Transfers: choose a destination folder and queue download, cancel, list transfers.
+- Transfers: choose a destination folder and queue single- or multi-source ranged downloads, cancel, list transfers.
 - Events: subscribe to Java backend events and receive an unsubscribe callback.
 
 There is no generic `send(command, payload)` or arbitrary channel argument exposed to the Renderer. Main validates ports, endpoint strings, UUIDs and file names again before dispatch. Native dialogs own the share and download directory selections.
@@ -68,3 +68,8 @@ The preload imports Electron only; Node process and filesystem APIs remain in Ma
 On app close, Main prevents immediate quit, sends `app.shutdown` to Java, closes stdin and waits for a bounded grace period. If the child does not exit, Main escalates to SIGTERM and then SIGKILL. An unexpected process exit rejects outstanding requests and publishes a backend failure event; the UI must not retain a stale RUNNING peer state.
 
 The P2P TCP layer currently targets trusted loopback/LAN environments. Peer authentication and transport encryption are not implemented by this desktop integration.
+
+
+## Multi-source transfer behavior
+
+The Renderer groups search hits by filename and advertised size and passes candidate peer IDs to transfer.downloadMulti. Java independently requests source metadata and only assembles bytes from peers with matching complete-file SHA-256. The Electron layer never handles file bytes. The transfer service uses 4 MiB logical ranges, at most eight concurrent range workers, offset-based writes into the existing .part staging file, retry-on-another-matching-peer, and a final full-file SHA-256 check before the no-overwrite rename.

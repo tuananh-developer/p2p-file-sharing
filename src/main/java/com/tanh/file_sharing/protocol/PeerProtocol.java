@@ -18,6 +18,8 @@ public final class PeerProtocol {
     public static final String RESPONSE = "response";
     public static final String REQUEST_FILE_LIST = "requestFileList";
     public static final String REQUEST_FILE = "requestFile";
+    public static final String REQUEST_FILE_INFO = "requestFileInfo";
+    public static final String REQUEST_FILE_RANGE = "requestFileRange";
     public static final String FILE_CHUNK = "fileChunk";
     public static final String FILE_END = "fileEnd";
     public static final String CANCEL_TRANSFER = "cancelTransfer";

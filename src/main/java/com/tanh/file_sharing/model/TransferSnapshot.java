@@ -1,8 +1,9 @@
 package com.tanh.file_sharing.model;
 
+import java.util.List;
 import java.util.UUID;
 
-/** Immutable view of a download task for the Electron/UI layer. */
+/** Immutable view of a single- or multi-source download task for the desktop UI. */
 public record TransferSnapshot(
         UUID taskId,
         UUID peerId,
@@ -11,5 +12,11 @@ public record TransferSnapshot(
         TransferStatus status,
         long receivedBytes,
         long totalBytes,
-        String detail) {
+        String detail,
+        List<UUID> sourcePeerIds,
+        long totalChunks,
+        long completedChunks) {
+    public TransferSnapshot {
+        sourcePeerIds = sourcePeerIds == null ? List.of() : List.copyOf(sourcePeerIds);
+    }
 }

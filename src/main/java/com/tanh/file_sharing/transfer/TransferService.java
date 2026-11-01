@@ -9,7 +9,10 @@ import com.tanh.file_sharing.peer.PeerException;
 import com.tanh.file_sharing.sharing.SharedDirectoryService;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -20,6 +23,8 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
@@ -27,11 +32,13 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.logging.Level;
@@ -45,11 +52,15 @@ public final class TransferService implements AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger(TransferService.class.getName());
     private static final int MAX_TASKS = 64;
     private static final int MAX_HISTORY = 100;
+    private static final int MAX_MULTI_SOURCE_PEERS = 16;
+    private static final int MAX_PARALLEL_RANGES = 8;
+    private static final int RANGE_CHUNK_BYTES = 4 * 1024 * 1024;
 
     private final EventPublisher events;
     private final Function<UUID, PeerConnection> connectionLookup;
     private final BooleanSupplier peerRunning;
     private final ExecutorService executor;
+    private final ExecutorService rangeExecutor;
     private final Map<UUID, DownloadTask> tasks = new ConcurrentHashMap<>();
     private final Object destinationLock = new Object();
     private final java.util.Set<Path> reservedTargets = ConcurrentHashMap.newKeySet();
@@ -67,24 +78,58 @@ public final class TransferService implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
+        this.rangeExecutor = Executors.newFixedThreadPool(MAX_PARALLEL_RANGES, runnable -> {
+            Thread thread = new Thread(runnable, "p2p-range-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     public DownloadAccepted download(UUID peerId, String fileName, String destinationDirectory) {
+        if (peerId == null) {
+            throw new PeerException("INVALID_ARGUMENT", "A valid peerId is required.");
+        }
+        return queueDownload(List.of(peerId), fileName, destinationDirectory, false);
+    }
+
+    /**
+     * Queues a ranged download using every currently connected candidate source
+     * that advertises identical size and SHA-256 metadata.
+     */
+    public DownloadAccepted downloadFromPeers(
+            List<UUID> candidatePeerIds, String fileName, String destinationDirectory) {
+        if (candidatePeerIds == null || candidatePeerIds.isEmpty()
+                || candidatePeerIds.size() > MAX_MULTI_SOURCE_PEERS
+                || candidatePeerIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new PeerException("INVALID_ARGUMENT",
+                    "Between 1 and " + MAX_MULTI_SOURCE_PEERS + " candidate peer IDs are required.");
+        }
+        List<UUID> uniquePeers = List.copyOf(new LinkedHashSet<>(candidatePeerIds));
+        return queueDownload(uniquePeers, fileName, destinationDirectory, true);
+    }
+
+    private DownloadAccepted queueDownload(
+            List<UUID> peerIds, String fileName, String destinationDirectory, boolean multiSource) {
         if (closed) {
             throw new PeerException("PEER_NOT_RUNNING", "The transfer service is shutting down.");
         }
         if (!peerRunning.getAsBoolean()) {
             throw new PeerException("PEER_NOT_RUNNING", "Start the local peer before downloading a file.");
         }
-        if (peerId == null) {
-            throw new PeerException("INVALID_ARGUMENT", "A valid peerId is required.");
-        }
         if (!SharedDirectoryService.isSafeFileName(fileName) || fileName.length() > 255) {
             throw new PeerException("INVALID_FILE_NAME", "A safe file name is required.");
         }
 
-        PeerConnection connection = connectionLookup.apply(peerId);
-        if (connection == null || connection.isClosed()) {
+        List<UUID> availablePeers = peerIds.stream()
+                .filter(id -> {
+                    PeerConnection connection = connectionLookup.apply(id);
+                    return connection != null && !connection.isClosed();
+                })
+                .toList();
+        if (availablePeers.isEmpty()) {
+            throw new PeerException("PEER_NOT_CONNECTED", "None of the selected file sources is connected.");
+        }
+        if (!multiSource && availablePeers.size() != 1) {
             throw new PeerException("PEER_NOT_CONNECTED", "The selected file source is not connected.");
         }
 
@@ -98,9 +143,9 @@ public final class TransferService implements AutoCloseable {
             deletePartQuietly(reserved.partPath);
             throw new PeerException("PEER_NOT_RUNNING", "The local peer stopped before the download was queued.");
         }
-        DownloadTask task = new DownloadTask(UUID.randomUUID(), peerId, fileName, reserved);
+        DownloadTask task = new DownloadTask(UUID.randomUUID(), availablePeers, fileName, reserved, multiSource);
         tasks.put(task.taskId, task);
-        publishStatus(task, "Download queued.");
+        publishStatus(task, multiSource ? "Multi-source download queued." : "Download queued.");
 
         try {
             Future<?> future = executor.submit(() -> runDownload(task));
@@ -185,6 +230,7 @@ public final class TransferService implements AutoCloseable {
         closed = true;
         cancelAllAndAwait(2_000);
         executor.shutdownNow();
+        rangeExecutor.shutdownNow();
     }
 
     private void runDownload(DownloadTask task) {
@@ -197,6 +243,10 @@ public final class TransferService implements AutoCloseable {
             }
             if (!peerRunning.getAsBoolean()) {
                 throw new PeerException("PEER_NOT_RUNNING", "The local peer stopped before the download began.");
+            }
+            if (task.multiSource) {
+                runMultiSourceDownload(task);
+                return;
             }
             transition(task, TransferStatus.CONNECTING, "Connecting to file source.");
 
@@ -256,7 +306,10 @@ public final class TransferService implements AutoCloseable {
             if (task.cancelled.get() || "TRANSFER_CANCELLED".equals(exception.getCode())) {
                 markCancelled(task, "Download cancelled.");
             } else {
-                markFailed(task, exception.getCode() + ": " + exception.getMessage());
+                String detail = exception.getCode() + ": " + exception.getMessage();
+                LOGGER.log(Level.WARNING,
+                        "Transfer task " + task.taskId + " for '" + task.fileName + "' failed: " + detail);
+                markFailed(task, detail);
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -285,6 +338,262 @@ public final class TransferService implements AutoCloseable {
             }
             task.finished.countDown();
         }
+    }
+
+    private void runMultiSourceDownload(DownloadTask task) throws InterruptedException, IOException {
+        transition(task, TransferStatus.CONNECTING, "Discovering identical file copies on connected peers.");
+
+        List<Future<PeerSourceInfo>> metadataRequests = new ArrayList<>();
+        for (UUID peerId : task.sourcePeerIds) {
+            metadataRequests.add(rangeExecutor.submit(() -> {
+                PeerConnection connection = connectionLookup.apply(peerId);
+                if (connection == null || connection.isClosed()) {
+                    return new PeerSourceInfo(peerId, null, "Peer is no longer connected.");
+                }
+                try {
+                    PeerConnection.FileMetadata metadata = connection.requestFileInfo(task.fileName);
+                    if (!task.fileName.equals(metadata.fileName())) {
+                        return new PeerSourceInfo(peerId, null, "Peer returned a different file name.");
+                    }
+                    return new PeerSourceInfo(peerId, metadata, null);
+                } catch (PeerException exception) {
+                    return new PeerSourceInfo(peerId, null, exception.getCode() + ": " + exception.getMessage());
+                } catch (RuntimeException exception) {
+                    return new PeerSourceInfo(peerId, null, "Metadata request failed.");
+                }
+            }));
+        }
+
+        Map<String, List<PeerSourceInfo>> identicalCopies = new HashMap<>();
+        for (Future<PeerSourceInfo> request : metadataRequests) {
+            PeerSourceInfo result;
+            try {
+                result = request.get();
+            } catch (InterruptedException exception) {
+                metadataRequests.forEach(future -> future.cancel(true));
+                throw exception;
+            } catch (ExecutionException exception) {
+                continue;
+            }
+            if (result.metadata() == null) {
+                continue;
+            }
+            String key = result.metadata().size() + ":" + result.metadata().sha256();
+            identicalCopies.computeIfAbsent(key, ignored -> new ArrayList<>()).add(result);
+        }
+
+        if (identicalCopies.isEmpty()) {
+            throw new PeerException("FILE_UNAVAILABLE",
+                    "No selected peer could provide metadata for '" + task.fileName + "'.");
+        }
+
+        List<PeerSourceInfo> selected = identicalCopies.values().stream()
+                .max(Comparator.comparingInt(List::size))
+                .orElseThrow();
+        long largestGroup = selected.size();
+        long matchingGroups = identicalCopies.values().stream()
+                .filter(group -> group.size() == largestGroup)
+                .count();
+        if (matchingGroups > 1) {
+            throw new PeerException("SOURCE_MISMATCH",
+                    "Connected peers advertise different contents for this file; choose one source explicitly.");
+        }
+
+        PeerConnection.FileMetadata metadata = selected.getFirst().metadata();
+        List<UUID> selectedPeerIds = selected.stream()
+                .map(PeerSourceInfo::peerId)
+                .sorted(Comparator.comparing(UUID::toString))
+                .toList();
+        task.sourcePeerIds = selectedPeerIds;
+        task.totalBytes = metadata.size();
+        task.expectedSha256 = metadata.sha256();
+        task.totalChunks = metadata.size() == 0 ? 0
+                : metadata.size() / RANGE_CHUNK_BYTES
+                        + (metadata.size() % RANGE_CHUNK_BYTES == 0 ? 0 : 1);
+        transition(task, TransferStatus.TRANSFERRING,
+                "Downloading " + task.totalChunks + " ranges from " + selectedPeerIds.size() + " matching peer(s).");
+
+        AtomicLong completedBytes = new AtomicLong();
+        AtomicLong completedChunks = new AtomicLong();
+        try (FileChannel output = FileChannel.open(
+                task.partPath, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            long nextChunk = 0;
+            while (nextChunk < task.totalChunks) {
+                if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                    throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+                }
+
+                List<Future<?>> batch = new ArrayList<>();
+                int batchSize = (int) Math.min(MAX_PARALLEL_RANGES, task.totalChunks - nextChunk);
+                for (int index = 0; index < batchSize; index++) {
+                    long chunkIndex = nextChunk + index;
+                    long offset = chunkIndex * RANGE_CHUNK_BYTES;
+                    long length = Math.min(RANGE_CHUNK_BYTES, metadata.size() - offset);
+                    batch.add(rangeExecutor.submit(() -> {
+                        downloadRangeWithFailover(
+                                task, metadata, selectedPeerIds, output, chunkIndex, offset, length,
+                                completedBytes, completedChunks);
+                        return null;
+                    }));
+                }
+
+                try {
+                    for (Future<?> future : batch) {
+                        future.get();
+                    }
+                } catch (ExecutionException exception) {
+                    batch.forEach(future -> future.cancel(true));
+                    Throwable cause = exception.getCause();
+                    if (cause instanceof PeerException peerException) {
+                        throw peerException;
+                    }
+                    if (cause instanceof IOException ioException) {
+                        throw ioException;
+                    }
+                    throw new PeerException("TRANSFER_FAILED",
+                            "A file range could not be downloaded from any matching peer.", cause);
+                } catch (InterruptedException exception) {
+                    batch.forEach(future -> future.cancel(true));
+                    throw exception;
+                }
+                nextChunk += batchSize;
+            }
+            output.force(true);
+        }
+
+        if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+            throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+        }
+        if (Files.size(task.partPath) != metadata.size()
+                || completedBytes.get() != metadata.size()
+                || completedChunks.get() != task.totalChunks) {
+            throw new PeerException("TRANSFER_SIZE_MISMATCH",
+                    "The downloaded ranges do not cover the complete source file.");
+        }
+
+        transition(task, TransferStatus.VERIFYING, "Verifying assembled file SHA-256.");
+        String actualHash = sha256(task.partPath);
+        if (!actualHash.equalsIgnoreCase(metadata.sha256())) {
+            throw new PeerException("INTEGRITY_CHECK_FAILED",
+                    "The assembled multi-source file does not match the source SHA-256.");
+        }
+        task.receivedBytes = metadata.size();
+        completeDownload(task);
+    }
+
+    private void downloadRangeWithFailover(
+            DownloadTask task,
+            PeerConnection.FileMetadata metadata,
+            List<UUID> peerIds,
+            FileChannel output,
+            long chunkIndex,
+            long offset,
+            long length,
+            AtomicLong completedBytes,
+            AtomicLong completedChunks) throws IOException, InterruptedException {
+        PeerException lastFailure = null;
+        int startIndex = (int) (chunkIndex % peerIds.size());
+        for (int attempt = 0; attempt < peerIds.size(); attempt++) {
+            if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+            }
+
+            UUID peerId = peerIds.get((startIndex + attempt) % peerIds.size());
+            PeerConnection connection = connectionLookup.apply(peerId);
+            if (connection == null || connection.isClosed()) {
+                lastFailure = new PeerException("PEER_NOT_CONNECTED",
+                        "Peer " + peerId + " disconnected before its range was requested.");
+                continue;
+            }
+
+            try {
+                // A logical range spans many wire chunks. Keep the write cursor
+                // across callbacks so later chunks append within this range.
+                long[] nextWritePosition = {offset};
+                connection.downloadFileRange(metadata, offset, length, new PeerConnection.DownloadSink() {
+                    @Override
+                    public void onMetadata(PeerConnection.FileMetadata received) {
+                        if (!metadata.equals(received)) {
+                            throw new PeerException("SOURCE_MISMATCH",
+                                    "The peer returned metadata for a different file version.");
+                        }
+                    }
+
+                    @Override
+                    public void onChunk(byte[] bytes) throws IOException {
+                        if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                            throw new PeerException("TRANSFER_CANCELLED", "The range transfer was cancelled.");
+                        }
+                        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+                        long position = nextWritePosition[0];
+                        while (buffer.hasRemaining()) {
+                            int written;
+                            try {
+                                written = output.write(buffer, position);
+                            } catch (IOException exception) {
+                                throw new PeerException("FILE_IO_ERROR",
+                                        "Could not write the downloaded file range.", exception);
+                            }
+                            if (written < 0) {
+                                throw new PeerException("FILE_IO_ERROR",
+                                        "Could not write the downloaded file range.");
+                            }
+                            if (written == 0) {
+                                Thread.onSpinWait();
+                            } else {
+                                position += written;
+                            }
+                        }
+                        nextWritePosition[0] = position;
+                    }
+                }, 5_000, task.cancelled::get);
+
+                if (nextWritePosition[0] != offset + length) {
+                    throw new PeerException("FILE_IO_ERROR",
+                            "The receiver did not write the complete range interval.");
+                }
+
+                completedBytes.addAndGet(length);
+                completedChunks.incrementAndGet();
+                synchronized (task.progressLock) {
+                    task.receivedBytes = completedBytes.get();
+                    task.completedChunks = completedChunks.get();
+                    events.publish("transferProgress", Map.of(
+                            "taskId", task.taskId.toString(),
+                            "receivedBytes", task.receivedBytes,
+                            "totalBytes", task.totalBytes,
+                            "completedChunks", task.completedChunks,
+                            "totalChunks", task.totalChunks,
+                            "percent", task.totalBytes == 0 ? 100.0
+                                    : Math.min(100.0, task.receivedBytes * 100.0 / task.totalBytes)));
+                }
+                return;
+            } catch (PeerException exception) {
+                if (task.cancelled.get()
+                        || "TRANSFER_CANCELLED".equals(exception.getCode())
+                        || "FILE_IO_ERROR".equals(exception.getCode())) {
+                    throw exception;
+                }
+                lastFailure = exception;
+            }
+        }
+        throw new PeerException("RANGE_UNAVAILABLE",
+                "No matching peer could provide range at offset " + offset + ".",
+                lastFailure);
+    }
+
+    private static String sha256(Path path) throws IOException {
+        MessageDigest digest = sha256Digest();
+        try (InputStream input = Files.newInputStream(path)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private void completeDownload(DownloadTask task) throws IOException {
@@ -440,15 +749,19 @@ public final class TransferService implements AutoCloseable {
     }
 
     private void publishStatus(DownloadTask task, String detail) {
-        events.publish("transferStatusChanged", Map.of(
-                "taskId", task.taskId.toString(),
-                "peerId", task.peerId.toString(),
-                "fileName", task.fileName,
-                "targetFileName", task.targetFileName,
-                "status", task.status.name(),
-                "receivedBytes", task.receivedBytes,
-                "totalBytes", task.totalBytes,
-                "detail", detail));
+        Map<String, Object> snapshot = new java.util.LinkedHashMap<>();
+        snapshot.put("taskId", task.taskId.toString());
+        snapshot.put("peerId", task.peerId.toString());
+        snapshot.put("fileName", task.fileName);
+        snapshot.put("targetFileName", task.targetFileName);
+        snapshot.put("status", task.status.name());
+        snapshot.put("receivedBytes", task.receivedBytes);
+        snapshot.put("totalBytes", task.totalBytes);
+        snapshot.put("detail", detail);
+        snapshot.put("sourcePeerIds", task.sourcePeerIds.stream().map(UUID::toString).toList());
+        snapshot.put("completedChunks", task.completedChunks);
+        snapshot.put("totalChunks", task.totalChunks);
+        events.publish("transferStatusChanged", snapshot);
     }
 
     private void releaseTarget(DownloadTask task) {
@@ -495,13 +808,19 @@ public final class TransferService implements AutoCloseable {
         }
     }
 
+    private record PeerSourceInfo(UUID peerId, PeerConnection.FileMetadata metadata, String error) {
+    }
+
     private record ReservedTarget(String fileName, Path targetPath, Path partPath) {
     }
 
     private static final class DownloadTask {
         private final Object lock = new Object();
+        private final Object progressLock = new Object();
         private final UUID taskId;
         private final UUID peerId;
+        private volatile List<UUID> sourcePeerIds;
+        private final boolean multiSource;
         private final String fileName;
         private final Path destination;
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -513,14 +832,19 @@ public final class TransferService implements AutoCloseable {
         private volatile TransferStatus status = TransferStatus.QUEUED;
         private volatile long receivedBytes;
         private volatile long totalBytes;
+        private volatile long totalChunks;
+        private volatile long completedChunks;
         private volatile String expectedSha256;
         private volatile String detail = "Download queued.";
         private volatile Thread worker;
         private volatile Future<?> future;
 
-        private DownloadTask(UUID taskId, UUID peerId, String fileName, ReservedTarget target) {
+        private DownloadTask(UUID taskId, List<UUID> peerIds, String fileName,
+                ReservedTarget target, boolean multiSource) {
             this.taskId = taskId;
-            this.peerId = peerId;
+            this.peerId = peerIds.getFirst();
+            this.sourcePeerIds = List.copyOf(peerIds);
+            this.multiSource = multiSource;
             this.fileName = fileName;
             this.destination = target.targetPath.getParent();
             this.targetFileName = target.fileName;
@@ -530,7 +854,7 @@ public final class TransferService implements AutoCloseable {
 
         private TransferSnapshot snapshot() {
             return new TransferSnapshot(taskId, peerId, fileName, targetFileName, status,
-                    receivedBytes, totalBytes, detail);
+                    receivedBytes, totalBytes, detail, sourcePeerIds, totalChunks, completedChunks);
         }
     }
 }

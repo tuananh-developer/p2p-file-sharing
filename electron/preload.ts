@@ -25,6 +25,7 @@ const api: P2PBridgeApi = {
   },
   transfer: {
     download: (peerId, fileName) => ipcRenderer.invoke("transfer:download", { peerId, fileName }),
+    downloadMulti: (peerIds, fileName) => ipcRenderer.invoke("transfer:download-multi", { peerIds, fileName }),
     cancel: (taskId) => ipcRenderer.invoke("transfer:cancel", taskId),
     list: () => ipcRenderer.invoke("transfer:list")
   },
