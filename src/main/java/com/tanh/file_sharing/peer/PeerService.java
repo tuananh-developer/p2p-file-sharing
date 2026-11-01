@@ -8,9 +8,15 @@ import com.tanh.file_sharing.model.ConnectionStatus;
 import com.tanh.file_sharing.model.PeerSnapshot;
 import com.tanh.file_sharing.model.PeerStatus;
 import com.tanh.file_sharing.model.RemotePeerSnapshot;
+import com.tanh.file_sharing.model.SharedDirectorySnapshot;
+import com.tanh.file_sharing.model.SharedFileSnapshot;
+import com.tanh.file_sharing.model.RemoteFileSearchResult;
+import com.tanh.file_sharing.model.FileSearchError;
+import com.tanh.file_sharing.model.FileSearchResponse;
 import com.tanh.file_sharing.protocol.FramedJsonChannel;
 import com.tanh.file_sharing.protocol.PeerProtocol;
 import com.tanh.file_sharing.protocol.ProtocolException;
+import com.tanh.file_sharing.sharing.SharedDirectoryService;
 
 import java.io.IOException;
 import java.net.BindException;
@@ -28,6 +34,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Locale;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,6 +61,7 @@ public final class PeerService implements AutoCloseable {
     private final Map<UUID, PeerConnection> activeConnections = new ConcurrentHashMap<>();
     private final Map<UUID, RemotePeerSnapshot> knownPeers = new ConcurrentHashMap<>();
     private final java.util.Set<Socket> pendingSockets = ConcurrentHashMap.newKeySet();
+    private final SharedDirectoryService sharedDirectoryService = new SharedDirectoryService();
 
     private volatile PeerStatus status = PeerStatus.STOPPED;
     private volatile String bindAddress = "127.0.0.1";
@@ -302,6 +314,135 @@ public final class PeerService implements AutoCloseable {
         return List.copyOf(peers);
     }
 
+    public SharedDirectorySnapshot setSharedDirectory(String path) {
+        SharedDirectorySnapshot snapshot = sharedDirectoryService.setDirectory(path);
+        events.publish("sharedDirectoryChanged", snapshot);
+        logActivity("Shared directory configured", "INFO");
+        return snapshot;
+    }
+
+    public SharedDirectorySnapshot getSharedDirectory() {
+        return sharedDirectoryService.snapshot();
+    }
+
+    public List<SharedFileSnapshot> listLocalSharedFiles() {
+        return sharedDirectoryService.listFiles();
+    }
+
+    /** Requests fresh file metadata from one connected peer. */
+    public List<RemoteFileSearchResult> listRemoteFiles(UUID remotePeerId) {
+        if (remotePeerId == null) {
+            throw new PeerException("INVALID_ARGUMENT", "A valid peerId is required.");
+        }
+
+        PeerConnection connection = activeConnections.get(remotePeerId);
+        RemotePeerSnapshot remote = knownPeers.get(remotePeerId);
+        if (connection == null || connection.isClosed() || remote == null
+                || remote.status() != ConnectionStatus.CONNECTED) {
+            throw new PeerException("PEER_NOT_CONNECTED", "The requested peer is not connected.");
+        }
+
+        JsonNode response = connection.sendRequest(PeerProtocol.REQUEST_FILE_LIST, Map.of(), CONNECT_TIMEOUT_MILLIS);
+        JsonNode filesNode = response.get("files");
+        if (filesNode == null || !filesNode.isArray()) {
+            throw new PeerException("INVALID_PEER_RESPONSE", "Peer returned an invalid file list.");
+        }
+
+        List<RemoteFileSearchResult> files = new ArrayList<>();
+        Set<String> seenNames = new HashSet<>();
+        for (JsonNode file : filesNode) {
+            if (!file.isObject()) {
+                throw new PeerException("INVALID_PEER_RESPONSE", "Peer returned malformed file metadata.");
+            }
+            JsonNode nameNode = file.get("fileName");
+            JsonNode sizeNode = file.get("size");
+            if (nameNode == null || !nameNode.isTextual() || nameNode.asText().length() > 255
+                    || !SharedDirectoryService.isSafeFileName(nameNode.asText())
+                    || sizeNode == null || !sizeNode.isIntegralNumber()
+                    || !sizeNode.canConvertToLong() || sizeNode.asLong() < 0) {
+                throw new PeerException("INVALID_PEER_RESPONSE",
+                        "Peer returned malformed or unsafe file metadata.");
+            }
+
+            String fileName = nameNode.asText();
+            if (!seenNames.add(fileName)) {
+                throw new PeerException("INVALID_PEER_RESPONSE", "Peer returned duplicate file names.");
+            }
+            files.add(new RemoteFileSearchResult(
+                    remotePeerId, remote.host(), remote.port(), fileName, sizeNode.asLong()));
+        }
+        files.sort(Comparator.comparing(RemoteFileSearchResult::fileName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(RemoteFileSearchResult::fileName));
+        return List.copyOf(files);
+    }
+
+    /**
+     * Refreshes the selected peers (or all connected peers) concurrently, then
+     * filters the successful results. A peer failure is isolated in errors.
+     */
+    public FileSearchResponse searchFiles(String keyword, List<UUID> selectedPeerIds) {
+        if (status != PeerStatus.RUNNING) {
+            throw new PeerException("PEER_NOT_RUNNING", "Start the local peer before searching remote files.");
+        }
+        String normalizedKeyword = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (normalizedKeyword.length() > 256) {
+            throw new PeerException("INVALID_ARGUMENT", "Search keyword must not exceed 256 characters.");
+        }
+
+        List<UUID> targets = selectedPeerIds == null
+                ? new ArrayList<>(activeConnections.keySet())
+                : new ArrayList<>(new LinkedHashSet<>(selectedPeerIds));
+        targets.sort(Comparator.comparing(id -> id == null ? "" : id.toString()));
+
+        List<FileSearchError> errors = new ArrayList<>();
+        List<CompletableFuture<PeerFetchResult>> requests = new ArrayList<>();
+        for (UUID target : targets) {
+            if (target == null) {
+                errors.add(new FileSearchError(null, "INVALID_ARGUMENT", "A peerId is required."));
+                continue;
+            }
+            PeerConnection connection = activeConnections.get(target);
+            if (connection == null || connection.isClosed()) {
+                errors.add(new FileSearchError(target, "PEER_NOT_CONNECTED", "The requested peer is not connected."));
+                continue;
+            }
+            requests.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new PeerFetchResult(target, listRemoteFiles(target), null);
+                } catch (PeerException exception) {
+                    return new PeerFetchResult(target, List.of(),
+                            new FileSearchError(target, exception.getCode(), exception.getMessage()));
+                } catch (RuntimeException exception) {
+                    return new PeerFetchResult(target, List.of(),
+                            new FileSearchError(target, "INTERNAL_ERROR", "Could not refresh this peer's file list."));
+                }
+            }));
+        }
+
+        List<RemoteFileSearchResult> results = new ArrayList<>();
+        for (CompletableFuture<PeerFetchResult> request : requests) {
+            PeerFetchResult outcome = request.join();
+            if (outcome.error() != null) {
+                errors.add(outcome.error());
+                continue;
+            }
+            for (RemoteFileSearchResult file : outcome.files()) {
+                if (normalizedKeyword.isEmpty()
+                        || file.fileName().toLowerCase(Locale.ROOT).contains(normalizedKeyword)) {
+                    results.add(file);
+                }
+            }
+        }
+
+        results.sort(Comparator.comparing(RemoteFileSearchResult::fileName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(RemoteFileSearchResult::host)
+                .thenComparingInt(RemoteFileSearchResult::port)
+                .thenComparing(file -> file.peerId().toString()));
+        errors.sort(Comparator.comparing(error ->
+                error.peerId() == null ? "" : error.peerId().toString()));
+        return new FileSearchResponse(results, errors);
+    }
+
     public PeerStatus getStatus() {
         return status;
     }
@@ -407,7 +548,17 @@ public final class PeerService implements AutoCloseable {
     private PeerConnection createConnection(Socket socket, FramedJsonChannel channel, UUID remotePeerId,
             String remoteHost, int remotePort, ConnectionDirection direction) {
         return new PeerConnection(socket, channel, remotePeerId, remoteHost, remotePort, direction,
-                () -> connectionClosed(remotePeerId, socket));
+                () -> connectionClosed(remotePeerId, socket), this::handleRemoteRequest);
+    }
+
+    private Map<String, Object> handleRemoteRequest(String operation, JsonNode payload) {
+        if (status != PeerStatus.RUNNING) {
+            throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+        }
+        if (PeerProtocol.REQUEST_FILE_LIST.equals(operation)) {
+            return Map.of("files", sharedDirectoryService.listFiles());
+        }
+        throw new PeerException("UNKNOWN_OPERATION", "Unsupported peer operation: " + operation);
     }
 
     private boolean registerConnection(PeerConnection candidate) {
@@ -453,6 +604,12 @@ public final class PeerService implements AutoCloseable {
             }
             logActivity("Disconnected from peer " + remoteId, "INFO");
         }
+    }
+
+    private record PeerFetchResult(
+            UUID peerId,
+            List<RemoteFileSearchResult> files,
+            FileSearchError error) {
     }
 
     private boolean isSocketRegistered(Socket socket) {

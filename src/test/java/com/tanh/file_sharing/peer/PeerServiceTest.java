@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.nio.file.Path;
+import java.util.List;
+import org.junit.jupiter.api.io.TempDir;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -18,6 +21,9 @@ import java.util.function.BooleanSupplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PeerServiceTest {
+    @TempDir
+    Path temporaryDirectory;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
@@ -111,6 +117,109 @@ class PeerServiceTest {
             executor.shutdownNow();
             first.close();
             second.close();
+        }
+    }
+
+    @Test
+    void sharesTopLevelFilesAndSearchesAcrossPeersWithoutLosingOtherResultsOnFailure() throws Exception {
+        int ownerPort = availablePort();
+        int consumerPort = distinctPort(ownerPort);
+        int unavailablePort = distinctPort(ownerPort);
+        while (unavailablePort == consumerPort) {
+            unavailablePort = distinctPort(ownerPort);
+        }
+
+        Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("provider-share"));
+        java.nio.file.Files.writeString(shared.resolve("Report-Q4.pdf"), "quarterly report");
+        java.nio.file.Files.writeString(shared.resolve("photo.png"), "image");
+        Path nested = java.nio.file.Files.createDirectory(shared.resolve("nested"));
+        java.nio.file.Files.writeString(nested.resolve("Report-hidden.pdf"), "not listed");
+
+        PeerService owner = new PeerService(mapper, EventPublisher.noop());
+        PeerService consumer = new PeerService(mapper, EventPublisher.noop());
+        PeerService notSharing = new PeerService(mapper, EventPublisher.noop());
+        try {
+            var ownerSnapshot = owner.startPeer("127.0.0.1", ownerPort);
+            consumer.startPeer("127.0.0.1", consumerPort);
+            var notSharingSnapshot = notSharing.startPeer("127.0.0.1", unavailablePort);
+            owner.setSharedDirectory(shared.toString());
+
+            consumer.connectPeer("127.0.0.1", ownerPort);
+            consumer.connectPeer("127.0.0.1", unavailablePort);
+
+            var directList = consumer.listRemoteFiles(ownerSnapshot.peerId());
+            assertEquals(2, directList.size());
+            assertTrue(directList.stream().anyMatch(file -> file.fileName().equals("Report-Q4.pdf")));
+            assertFalse(directList.stream().anyMatch(file -> file.fileName().equals("Report-hidden.pdf")));
+
+            var search = consumer.searchFiles("REPORT", null);
+            assertEquals(1, search.results().size());
+            assertEquals("Report-Q4.pdf", search.results().get(0).fileName());
+            assertEquals(ownerSnapshot.peerId(), search.results().get(0).peerId());
+            assertEquals("127.0.0.1", search.results().get(0).host());
+            assertEquals(16L, search.results().get(0).size());
+            assertEquals(1, search.errors().size());
+            assertEquals(notSharingSnapshot.peerId(), search.errors().get(0).peerId());
+            assertEquals("NOT_SHARING", search.errors().get(0).code());
+
+            var noMatch = consumer.searchFiles("does-not-exist", List.of(ownerSnapshot.peerId()));
+            assertTrue(noMatch.results().isEmpty());
+            assertTrue(noMatch.errors().isEmpty());
+        } finally {
+            consumer.close();
+            owner.close();
+            notSharing.close();
+        }
+    }
+
+    @Test
+    void supportsConcurrentFileListRequestsInBothDirectionsOnOneConnection() throws Exception {
+        int firstPort = availablePort();
+        int secondPort = distinctPort(firstPort);
+        PeerService first = new PeerService(mapper, EventPublisher.noop());
+        PeerService second = new PeerService(mapper, EventPublisher.noop());
+
+        Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("first-share"));
+        Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("second-share"));
+        java.nio.file.Files.writeString(firstShare.resolve("from-first.txt"), "first");
+        java.nio.file.Files.writeString(secondShare.resolve("from-second.txt"), "second");
+
+        ExecutorService requests = Executors.newFixedThreadPool(2);
+        try {
+            var firstSnapshot = first.startPeer("127.0.0.1", firstPort);
+            var secondSnapshot = second.startPeer("127.0.0.1", secondPort);
+            first.setSharedDirectory(firstShare.toString());
+            second.setSharedDirectory(secondShare.toString());
+            first.connectPeer("127.0.0.1", secondPort);
+
+            Future<List<com.tanh.file_sharing.model.RemoteFileSearchResult>> firstToSecond =
+                    requests.submit(() -> first.listRemoteFiles(secondSnapshot.peerId()));
+            Future<List<com.tanh.file_sharing.model.RemoteFileSearchResult>> secondToFirst =
+                    requests.submit(() -> second.listRemoteFiles(firstSnapshot.peerId()));
+
+            assertEquals("from-second.txt", firstToSecond.get(7, TimeUnit.SECONDS).get(0).fileName());
+            assertEquals("from-first.txt", secondToFirst.get(7, TimeUnit.SECONDS).get(0).fileName());
+        } finally {
+            requests.shutdownNow();
+            first.close();
+            second.close();
+        }
+    }
+
+    @Test
+    void sharedDirectoryConfigurationIsNotPersistedBetweenPeerServiceInstances() throws Exception {
+        Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("session-share"));
+        PeerService firstSession = new PeerService(mapper, EventPublisher.noop());
+        PeerService nextSession = new PeerService(mapper, EventPublisher.noop());
+        try {
+            firstSession.setSharedDirectory(shared.toString());
+
+            assertTrue(firstSession.getSharedDirectory().configured());
+            assertFalse(nextSession.getSharedDirectory().configured());
+            assertThrows(PeerException.class, nextSession::listLocalSharedFiles);
+        } finally {
+            firstSession.close();
+            nextSession.close();
         }
     }
 

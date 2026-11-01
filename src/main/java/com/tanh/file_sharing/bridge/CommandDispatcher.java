@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.tanh.file_sharing.peer.PeerException;
 import com.tanh.file_sharing.peer.PeerService;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,6 +35,16 @@ public final class CommandDispatcher {
                     peerService.disconnectPeer(requiredUuid(body, "peerId")));
             case "peer.status" -> Map.of("peer", peerService.getPeerStatus());
             case "peer.list" -> Map.of("peers", peerService.listPeers());
+            case "share.setDirectory" -> Map.of("sharedDirectory",
+                    peerService.setSharedDirectory(requiredText(body, "path")));
+            case "share.getDirectory" -> Map.of("sharedDirectory", peerService.getSharedDirectory());
+            case "files.listLocal" -> Map.of("files", peerService.listLocalSharedFiles());
+            case "files.listRemote" -> Map.of("files",
+                    peerService.listRemoteFiles(requiredUuid(body, "peerId")));
+            case "files.search" -> {
+                var result = peerService.searchFiles(optionalQuery(body, "keyword"), optionalPeerIds(body, "peerIds"));
+                yield Map.of("results", result.results(), "errors", result.errors());
+            }
             case "app.shutdown" -> shutdownApplication();
             default -> throw new PeerException("UNKNOWN_COMMAND", "Unsupported command: " + command);
         };
@@ -54,6 +66,11 @@ public final class CommandDispatcher {
             case "disconnectPeer" -> "peer.disconnect";
             case "getPeerStatus" -> "peer.status";
             case "listPeers" -> "peer.list";
+            case "setSharedDirectory" -> "share.setDirectory";
+            case "getSharedDirectory" -> "share.getDirectory";
+            case "listLocalSharedFiles" -> "files.listLocal";
+            case "listRemoteFiles" -> "files.listRemote";
+            case "searchFiles" -> "files.search";
             case "shutdownApplication" -> "app.shutdown";
             default -> command;
         };
@@ -86,6 +103,41 @@ public final class CommandDispatcher {
                     "Field '" + field + "' is required and must be an integer.");
         }
         return value.asInt();
+    }
+
+    private static String optionalQuery(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return "";
+        }
+        if (!value.isTextual()) {
+            throw new PeerException("INVALID_ARGUMENT", "Field '" + field + "' must be a string.");
+        }
+        return value.asText().trim();
+    }
+
+    private static List<UUID> optionalPeerIds(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isArray() || value.size() > 100) {
+            throw new PeerException("INVALID_ARGUMENT",
+                    "Field '" + field + "' must be an array containing at most 100 peer IDs.");
+        }
+
+        List<UUID> peerIds = new ArrayList<>();
+        for (JsonNode item : value) {
+            if (!item.isTextual() || item.asText().isBlank()) {
+                throw new PeerException("INVALID_ARGUMENT", "Every value in '" + field + "' must be a UUID.");
+            }
+            try {
+                peerIds.add(UUID.fromString(item.asText()));
+            } catch (IllegalArgumentException exception) {
+                throw new PeerException("INVALID_ARGUMENT", "Every value in '" + field + "' must be a UUID.", exception);
+            }
+        }
+        return List.copyOf(peerIds);
     }
 
     private static UUID requiredUuid(JsonNode payload, String field) {
