@@ -6,8 +6,8 @@
 
 ## Tech stack
 
-- Java 21
-- Gradle 9.8.1 (Gradle Wrapper)
+- Java 27
+- Gradle 9.8.2 (Gradle Wrapper)
 - TCP/IP sockets
 - JSON Lines bridge (Jackson)
 - JUnit Jupiter
@@ -15,8 +15,8 @@
 
 ## Requirements
 
-- Fedora Linux (hoặc Linux/macOS/Windows có Java 21 và quyền mở TCP port)
-- JDK 21
+- Fedora Linux (hoặc Linux/macOS/Windows có Java 27 và quyền mở TCP port)
+- JDK 27 (Temurin hoặc OpenJDK tương thích)
 - Node.js 24+ và npm 10+
 - Không cần database hoặc dịch vụ cloud cho MVP
 
@@ -135,7 +135,7 @@ npm install
 npm run dev
 ```
 
-Lệnh `npm run dev` compile Electron Main/Preload, khởi chạy Vite ở loopback và mở cửa sổ desktop. Java backend được Electron tự khởi động từ `build/install/file_sharing/lib`; cần có JDK 21 trong `JAVA_HOME` hoặc `PATH`.
+Lệnh `npm run dev` compile Electron Main/Preload, khởi chạy Vite ở loopback và mở cửa sổ desktop. Java backend được Electron tự khởi động từ `build/install/file_sharing/lib`; cần có JDK 27 trong `JAVA_HOME` hoặc `PATH`.
 
 Kiểm tra và build:
 

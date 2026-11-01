@@ -31,7 +31,7 @@ File bytes flow only between Java peers over TCP. Electron/React carries control
 4. Electron waits up to 15 seconds for the JSON Lines event `backendStatusChanged: READY`. A process spawn error, invalid stdout frame, startup timeout or unexpected exit updates backend status to FAILED.
 5. Java stdout is a protocol stream. Java diagnostics are read from stderr and are never parsed as JSON Lines.
 
-The app requires Java 21 to be installed on the host. The package contains the Java application and its runtime dependencies, not a bundled JVM.
+The app requires Java 27 to be installed on the host. The package contains the Java application and its runtime dependencies, not a bundled JVM.
 
 ## JSON Lines request handling
 
