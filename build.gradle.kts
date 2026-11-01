@@ -17,9 +17,10 @@ repositories {
 }
 
 dependencies {
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
 }
 
 application {
@@ -32,5 +33,5 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 tasks.test {
-    useUnitPlatform()
+    useJUnitPlatform()
 }
