@@ -128,6 +128,10 @@ final class ResumeManifestStore {
         }
 
         Path partPath = partPathFor(manifestPath);
+        String expectedManifestName = targetFileName + ".part.resume";
+        if (!manifestPath.getFileName().toString().equals(expectedManifestName)) {
+            throw new IOException("Resume manifest filename does not match its target filename.");
+        }
         if (Files.isSymbolicLink(partPath)
                 || !Files.isRegularFile(partPath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Partial download is missing or is not a regular file.");
@@ -175,10 +179,11 @@ final class ResumeManifestStore {
             }
         }
 
-        Path temporary = manifestPath.resolveSibling(manifestPath.getFileName() + ".tmp");
+        Path temporary = Files.createTempFile(
+                manifestPath.getParent(), manifestPath.getFileName().toString() + ".", ".tmp");
         try {
             try (OutputStream output = Files.newOutputStream(temporary,
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
                 properties.store(output, "P2P file-sharing resumable download");
             }
             try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
