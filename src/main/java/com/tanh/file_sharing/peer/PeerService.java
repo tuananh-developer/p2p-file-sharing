@@ -15,6 +15,7 @@ import com.tanh.file_sharing.model.FileSearchError;
 import com.tanh.file_sharing.model.FileSearchResponse;
 import com.tanh.file_sharing.model.DownloadAccepted;
 import com.tanh.file_sharing.model.TransferSnapshot;
+import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
 import com.tanh.file_sharing.protocol.FramedJsonChannel;
 import com.tanh.file_sharing.protocol.PeerProtocol;
 import com.tanh.file_sharing.protocol.ProtocolException;
@@ -456,12 +457,25 @@ public final class PeerService implements AutoCloseable {
         return transferService.download(remotePeerId, fileName, destinationDirectory);
     }
 
+    public DownloadAccepted downloadFileFromPeers(
+            List<UUID> remotePeerIds, String fileName, String destinationDirectory) {
+        return transferService.downloadFromPeers(remotePeerIds, fileName, destinationDirectory);
+    }
+
     public TransferSnapshot cancelDownload(UUID taskId) {
         return transferService.cancel(taskId);
     }
 
     public List<TransferSnapshot> listTransfers() {
         return transferService.listTransfers();
+    }
+
+    public List<ResumableDownloadSnapshot> listResumableDownloads(String destinationDirectory) {
+        return transferService.listResumableDownloads(destinationDirectory);
+    }
+
+    public DownloadAccepted resumeDownload(UUID taskId, List<UUID> peerIds, String destinationDirectory) {
+        return transferService.resume(taskId, peerIds, destinationDirectory);
     }
 
     public PeerStatus getStatus() {
@@ -471,6 +485,11 @@ public final class PeerService implements AutoCloseable {
     @Override
     public void close() {
         try {
+            // Application shutdown pauses transfers after their completed ranges
+            // have been persisted; an explicit peer.stop still cancels them.
+            if (!transferService.pauseAllAndAwait(5_000)) {
+                LOGGER.warning("Some downloads did not pause before application shutdown.");
+            }
             if (status == PeerStatus.RUNNING || status == PeerStatus.STOPPING) {
                 try {
                     stopPeer();
@@ -574,11 +593,23 @@ public final class PeerService implements AutoCloseable {
             String remoteHost, int remotePort, ConnectionDirection direction) {
         return new PeerConnection(socket, channel, remotePeerId, remoteHost, remotePort, direction,
                 () -> connectionClosed(remotePeerId, socket), this::handleRemoteRequest,
-                fileName -> {
-                    if (status != PeerStatus.RUNNING) {
-                        throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                new PeerConnection.FileProvider() {
+                    @Override
+                    public com.tanh.file_sharing.sharing.SharedFileSource openFile(String fileName) {
+                        if (status != PeerStatus.RUNNING) {
+                            throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                        }
+                        return sharedDirectoryService.openFile(fileName);
                     }
-                    return sharedDirectoryService.openFile(fileName);
+
+                    @Override
+                    public com.tanh.file_sharing.sharing.SharedFileSource openFileRange(
+                            String fileName, long expectedSize) {
+                        if (status != PeerStatus.RUNNING) {
+                            throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                        }
+                        return sharedDirectoryService.openFileRange(fileName, expectedSize);
+                    }
                 });
     }
 
@@ -588,6 +619,22 @@ public final class PeerService implements AutoCloseable {
         }
         if (PeerProtocol.REQUEST_FILE_LIST.equals(operation)) {
             return Map.of("files", sharedDirectoryService.listFiles());
+        }
+        if (PeerProtocol.REQUEST_FILE_INFO.equals(operation)) {
+            JsonNode nameNode = payload.get("fileName");
+            if (nameNode == null || !nameNode.isTextual()
+                    || !SharedDirectoryService.isSafeFileName(nameNode.asText())
+                    || nameNode.asText().length() > 255) {
+                throw new PeerException("INVALID_FILE_NAME", "A safe file name is required.");
+            }
+            try (var source = sharedDirectoryService.openFile(nameNode.asText())) {
+                return Map.of(
+                        "fileName", source.fileName(),
+                        "size", source.size(),
+                        "sha256", source.sha256());
+            } catch (IOException exception) {
+                throw new PeerException("FILE_UNAVAILABLE", "The requested file is unavailable.", exception);
+            }
         }
         throw new PeerException("UNKNOWN_OPERATION", "Unsupported peer operation: " + operation);
     }
