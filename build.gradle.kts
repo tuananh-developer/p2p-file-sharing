@@ -8,7 +8,7 @@ version = "0.1.0-SNAPSHOT"
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(27))
     }
 }
 
@@ -29,7 +29,7 @@ application {
 
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
-    options.release.set(21)
+    options.release.set(27)
 }
 
 tasks.test {

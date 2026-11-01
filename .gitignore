@@ -35,3 +35,10 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Electron / Node desktop
+node_modules/
+dist/
+release/
+coverage/
+.npm/

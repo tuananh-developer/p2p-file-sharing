@@ -1,22 +1,23 @@
 # P2P File Sharing
 
-Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Java P2P Core chịu trách nhiệm quản lý peer và truyền thông trực tiếp qua TCP. Electron/React sẽ là lớp desktop/UI giao tiếp với Java qua JSON Lines trên `stdin`/`stdout`.
+Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core đã có vòng đời peer, kết nối TCP, file catalog và tải file một peer-một file với SHA-256. Repo hiện chưa có mã nguồn Electron/React; resume và tải đa nguồn chưa được triển khai.
+> **Trạng thái:** Java Core đã có vòng đời peer, file catalog và tải file SHA-256; Electron/React desktop shell đã được tích hợp ở mức MVP. Resume, tải đa nguồn và xác thực/mã hóa peer chưa thuộc phạm vi hiện tại.
 
 ## Tech stack
 
-- Java 21
-- Gradle 9.8.1 (Gradle Wrapper)
+- Java 27
+- Gradle 9.8.2 (Gradle Wrapper)
 - TCP/IP sockets
 - JSON Lines bridge (Jackson)
 - JUnit Jupiter
-- Frontend dự kiến: Electron, React, TypeScript
+- Desktop UI: Electron 45, React 19, TypeScript 6, Vite 8
 
 ## Requirements
 
-- Fedora Linux (hoặc Linux/macOS/Windows có Java 21 và quyền mở TCP port)
-- JDK 21
+- Fedora Linux (hoặc Linux/macOS/Windows có Java 27 và quyền mở TCP port)
+- JDK 27 (Temurin hoặc OpenJDK tương thích)
+- Node.js 24+ và npm 10+
 - Không cần database hoặc dịch vụ cloud cho MVP
 
 Kiểm tra Java:
@@ -124,6 +125,44 @@ Dừng peer hoặc yêu cầu Java process kết thúc:
 
 `app.shutdown` dừng peer, đóng tài nguyên và kết thúc vòng lặp bridge. Electron nên gửi command này trước khi kết thúc tiến trình Java, sau đó đóng stdin/process và xử lý timeout ở phía Electron.
 
+## Run the desktop app
+
+Cài dependencies frontend, tạo Gradle distribution cho Java Core, sau đó chạy Electron + Vite:
+
+```bash
+npm install
+./gradlew --no-daemon installDist
+npm run dev
+```
+
+Lệnh `npm run dev` compile Electron Main/Preload, khởi chạy Vite ở loopback và mở cửa sổ desktop. Java backend được Electron tự khởi động từ `build/install/file_sharing/lib`; cần có JDK 27 trong `JAVA_HOME` hoặc `PATH`.
+
+Kiểm tra và build:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+Tạo thư mục ứng dụng Linux (cần chạy `installDist` trước):
+
+```bash
+npm run package:linux
+```
+
+Có thể override executable Java hoặc thư mục thư viện backend khi phát triển bằng `P2P_JAVA_EXECUTABLE` và `P2P_BACKEND_LIB_DIR`. Renderer không nhận đường dẫn đích tải file tùy ý: hộp thoại hệ thống chọn thư mục được mở từ Electron Main.
+
+### Desktop security and process boundary
+
+- BrowserWindow bật `contextIsolation`, `sandbox`, `webSecurity` và tắt `nodeIntegration`.
+- Preload chỉ expose các thao tác P2P có allowlist; Renderer không được gọi arbitrary IPC, `child_process`, filesystem hoặc socket.
+- Electron Main khởi chạy Java bằng `spawn` với `shell: false`; stdout dành riêng cho JSON Lines và stderr dành cho log.
+- Response được ghép theo request ID. Event Java được chuyển tiếp đến React; process exit làm backend state chuyển sang FAILED thay vì giữ trạng thái peer đang chạy cũ.
+- Khi đóng ứng dụng, Electron gửi `app.shutdown`, chờ process thoát trong thời hạn hữu hạn rồi mới dùng tín hiệu terminate/kill dự phòng.
+
+Xem [`docs/desktop-architecture.md`](docs/desktop-architecture.md) để biết thêm về bridge, IPC và quy trình shutdown.
+
 ## JSON Lines bridge contract
 
 Command envelope:
@@ -170,5 +209,7 @@ MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connec
 - [x] Session-scoped shared directory selection and safe top-level file listing
 - [x] Remote file-list requests, case-insensitive search and per-peer error isolation
 - [x] Single-file transfers, progress reporting, cancellation and SHA-256 verification
-- [ ] Electron process lifecycle integration
-- [ ] React UI and preload/IPC layer
+- [x] Electron Java process lifecycle, startup readiness, correlated responses and shutdown cleanup
+- [x] Allowlisted preload/IPC boundary and backend-failure events
+- [x] React UI for peer lifecycle, shared directory, search, download progress and cancellation
+- [ ] Verify desktop packaging on Fedora through a full manual two-instance LAN test
