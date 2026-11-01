@@ -91,6 +91,7 @@ class JsonLineBridgeTest {
                 mapper.writeValueAsString(Map.of("id", "list-local", "command", "files.listLocal", "payload", Map.of())),
                 mapper.writeValueAsString(Map.of(
                         "id", "search", "command", "files.search", "payload", Map.of("keyword", "hello"))),
+                mapper.writeValueAsString(Map.of("id", "transfers", "command", "transfer.list", "payload", Map.of())),
                 mapper.writeValueAsString(Map.of("id", "shutdown", "command", "app.shutdown", "payload", Map.of())),
                 "");
 
@@ -106,8 +107,10 @@ class JsonLineBridgeTest {
             }
         }
 
-        assertEquals(6, responses.size());
+        assertEquals(7, responses.size());
         assertTrue(responses.values().stream().allMatch(response -> response.path("success").asBoolean()));
+        assertTrue(responses.get("transfers").path("data").path("transfers").isArray());
+        assertEquals(0, responses.get("transfers").path("data").path("transfers").size());
         assertTrue(responses.get("get-share").path("data").path("sharedDirectory").path("configured").asBoolean());
         assertEquals(1, responses.get("list-local").path("data").path("files").size());
         assertEquals("hello.txt",

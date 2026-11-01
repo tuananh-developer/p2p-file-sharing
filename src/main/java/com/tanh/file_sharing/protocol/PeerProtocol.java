@@ -17,6 +17,10 @@ public final class PeerProtocol {
     public static final String REQUEST = "request";
     public static final String RESPONSE = "response";
     public static final String REQUEST_FILE_LIST = "requestFileList";
+    public static final String REQUEST_FILE = "requestFile";
+    public static final String FILE_CHUNK = "fileChunk";
+    public static final String FILE_END = "fileEnd";
+    public static final String CANCEL_TRANSFER = "cancelTransfer";
 
     private PeerProtocol() {
     }
@@ -83,6 +87,39 @@ public final class PeerProtocol {
         frame.put("success", false);
         frame.put("error", error);
         return frame;
+    }
+
+    public static Map<String, Object> fileChunk(String requestId, long sequence, String base64Data) {
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", FILE_CHUNK);
+        frame.put("protocolVersion", VERSION);
+        frame.put("requestId", requestId);
+        frame.put("sequence", sequence);
+        frame.put("data", base64Data);
+        return frame;
+    }
+
+    public static Map<String, Object> fileEnd(
+            String requestId, boolean success, long totalBytes, String code, String message) {
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", FILE_END);
+        frame.put("protocolVersion", VERSION);
+        frame.put("requestId", requestId);
+        frame.put("success", success);
+        frame.put("totalBytes", totalBytes);
+        if (!success) {
+            frame.put("error", Map.of(
+                    "code", code == null ? "TRANSFER_FAILED" : code,
+                    "message", message == null ? "File transfer failed." : message));
+        }
+        return frame;
+    }
+
+    public static Map<String, Object> cancelTransfer(String requestId) {
+        return Map.of(
+                "type", CANCEL_TRANSFER,
+                "protocolVersion", VERSION,
+                "requestId", requestId);
     }
 
     public static HandshakeInfo parseHandshake(JsonNode frame) throws ProtocolException {
