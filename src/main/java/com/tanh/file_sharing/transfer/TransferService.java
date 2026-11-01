@@ -791,6 +791,14 @@ public final class TransferService implements AutoCloseable {
                     releaseTargetPath(next.targetPath);
                     continue;
                 } catch (IOException moveFailure) {
+                    if (nextManifest != null && Files.exists(nextManifest, LinkOption.NOFOLLOW_LINKS)
+                            && oldManifest != null && !Files.exists(oldManifest, LinkOption.NOFOLLOW_LINKS)) {
+                        try {
+                            Files.move(nextManifest, oldManifest);
+                        } catch (IOException rollbackFailure) {
+                            moveFailure.addSuppressed(rollbackFailure);
+                        }
+                    }
                     if (partMoved && Files.exists(next.partPath, LinkOption.NOFOLLOW_LINKS)) {
                         try {
                             Files.move(next.partPath, oldPart);
