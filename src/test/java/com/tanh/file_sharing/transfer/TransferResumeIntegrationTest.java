@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -57,16 +58,16 @@ class TransferResumeIntegrationTest {
 
             var recoverable = restartedReceiver.listResumableDownloads(destination.toString());
             assertEquals(1, recoverable.size());
-            assertEquals(acceptedTaskId, recoverable.getFirst().taskId());
+            assertEquals(taskId, recoverable.getFirst().taskId());
             assertEquals(1, recoverable.getFirst().completedChunks());
             assertEquals(RANGE_BYTES, recoverable.getFirst().receivedBytes());
 
             var accepted = restartedReceiver.resumeDownload(
-                    acceptedTaskId, List.of(connected.peerId()), destination.toString());
-            assertEquals(acceptedTaskId, accepted.taskId());
+                    taskId, List.of(connected.peerId()), destination.toString());
+            assertEquals(taskId, accepted.taskId());
 
             await(() -> restartedReceiver.listTransfers().stream()
-                    .anyMatch(task -> task.taskId().equals(acceptedTaskId) && task.status().isTerminal()));
+                    .anyMatch(task -> task.taskId().equals(taskId) && task.status().isTerminal()));
             var completed = restartedReceiver.listTransfers().stream()
                     .filter(task -> task.taskId().equals(taskId))
                     .findFirst().orElseThrow();
@@ -126,7 +127,7 @@ class TransferResumeIntegrationTest {
             releaseProgressCallback.countDown();
 
             var paused = firstReceiver.listTransfers().stream()
-                    .filter(task -> task.taskId().equals(taskId))
+                    .filter(task -> task.taskId().equals(acceptedTaskId))
                     .findFirst().orElseThrow();
             assertEquals(TransferStatus.PAUSED, paused.status(), paused.detail());
             assertTrue(Files.exists(manifestPath));
@@ -146,14 +147,15 @@ class TransferResumeIntegrationTest {
 
             var recoverable = restartedReceiver.listResumableDownloads(destination.toString());
             assertEquals(1, recoverable.size());
-            assertEquals(taskId, recoverable.getFirst().taskId());
+            assertEquals(acceptedTaskId, recoverable.getFirst().taskId());
             assertEquals(paused.completedChunks(), recoverable.getFirst().completedChunks());
             assertNotEquals(sourcePeer.peerId(), newSourcePeer.peerId());
 
             restartedReceiver.resumeDownload(
-                    taskId, List.of(newConnection.peerId()), destination.toString());
+                    acceptedTaskId, List.of(newConnection.peerId()), destination.toString());
+            PeerService finalReceiver = restartedReceiver;
             UUID resumedTaskId = acceptedTaskId;
-            await(() -> restartedReceiver.listTransfers().stream()
+            await(() -> finalReceiver.listTransfers().stream()
                     .anyMatch(task -> task.taskId().equals(resumedTaskId) && task.status().isTerminal()));
 
             var completed = restartedReceiver.listTransfers().stream()
