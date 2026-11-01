@@ -169,6 +169,10 @@ public final class TransferService implements AutoCloseable {
             for (Path manifestPath : ResumeManifestStore.findManifests(directory)) {
                 try {
                     ResumeManifestStore.Manifest manifest = ResumeManifestStore.loadAndVerify(manifestPath);
+                    if (manifest.chunkBytes() != RANGE_CHUNK_BYTES
+                            || Files.exists(directory.resolve(manifest.targetFileName()), LinkOption.NOFOLLOW_LINKS)) {
+                        continue;
+                    }
                     DownloadTask active = tasks.get(manifest.taskId());
                     if (active != null && !active.status.isTerminal()) {
                         continue;
