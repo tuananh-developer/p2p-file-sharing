@@ -272,15 +272,38 @@ function App() {
     });
   };
 
+  const matchingSourceIds = (file: RemoteFileSearchResult) => [...new Set(searchResults
+    .filter((candidate) => candidate.fileName === file.fileName && candidate.size === file.size)
+    .map((candidate) => candidate.peerId))].slice(0, 16);
+
   const handleDownload = (file: RemoteFileSearchResult) => {
-    void runAction("download-" + file.peerId + "-" + file.fileName, async () => {
+    const sourcePeerIds = matchingSourceIds(file);
+    void runAction("download-" + file.fileName, async () => {
+      const accepted = sourcePeerIds.length > 1
+        ? await window.p2p.transfer.downloadMulti(sourcePeerIds, file.fileName)
+        : await window.p2p.transfer.download(file.peerId, file.fileName);
+      if (!accepted) {
+        return;
+      }
+      setTransfers(await window.p2p.transfer.list());
+      setNotice({
+        kind: "success",
+        message: "Download queued as " + accepted.targetFileName +
+          (sourcePeerIds.length > 1 ? " using " + sourcePeerIds.length + " candidate peer(s)." : ".")
+      });
+      addActivity((sourcePeerIds.length > 1 ? "Multi-source" : "Single-source") +
+        " download queued: " + file.fileName + ".");
+    });
+  };
+
+  const handleDownloadFromThisPeer = (file: RemoteFileSearchResult) => {
+    void runAction("download-single-" + file.peerId + "-" + file.fileName, async () => {
       const accepted = await window.p2p.transfer.download(file.peerId, file.fileName);
       if (!accepted) {
         return;
       }
       setTransfers(await window.p2p.transfer.list());
       setNotice({ kind: "success", message: "Download queued as " + accepted.targetFileName + "." });
-      addActivity("Download queued: " + file.fileName + ".");
     });
   };
 
@@ -512,10 +535,21 @@ function App() {
                           <button
                             className="button button-secondary button-small"
                             onClick={() => handleDownload(file)}
-                            disabled={backend.status !== "READY" || busy["download-" + file.peerId + "-" + file.fileName]}
+                            disabled={backend.status !== "READY" || busy["download-" + file.fileName]}
                           >
-                            Download
+                            {matchingSourceIds(file).length > 1
+                              ? "Multi-source (" + matchingSourceIds(file).length + ")"
+                              : "Download"}
                           </button>
+                          {matchingSourceIds(file).length > 1 && (
+                            <button
+                              className="button button-quiet button-small"
+                              onClick={() => handleDownloadFromThisPeer(file)}
+                              disabled={backend.status !== "READY" || busy["download-single-" + file.peerId + "-" + file.fileName]}
+                            >
+                              This peer only
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -550,6 +584,13 @@ function App() {
                         <div>
                           <strong>{transfer.targetFileName || transfer.fileName}</strong>
                           <span>{transfer.detail}</span>
+                          {transfer.sourcePeerIds && transfer.sourcePeerIds.length > 0 && (
+                            <span>{transfer.sourcePeerIds.length} source peer(s)
+                              {typeof transfer.totalChunks === "number" && transfer.totalChunks > 0
+                                ? " · " + (transfer.completedChunks ?? 0) + "/" + transfer.totalChunks + " ranges"
+                                : ""}
+                            </span>
+                          )}
                         </div>
                         <span className={"state-chip " + (transfer.status === "COMPLETED" ? "state-running" : "state-idle")}>
                           {transfer.status}
@@ -639,7 +680,9 @@ function mergeTransferProgress(
     ? {
         ...item,
         receivedBytes: typeof data.receivedBytes === "number" ? data.receivedBytes : item.receivedBytes,
-        totalBytes: typeof data.totalBytes === "number" ? data.totalBytes : item.totalBytes
+        totalBytes: typeof data.totalBytes === "number" ? data.totalBytes : item.totalBytes,
+        completedChunks: typeof data.completedChunks === "number" ? data.completedChunks : item.completedChunks,
+        totalChunks: typeof data.totalChunks === "number" ? data.totalChunks : item.totalChunks
       }
     : item);
 }

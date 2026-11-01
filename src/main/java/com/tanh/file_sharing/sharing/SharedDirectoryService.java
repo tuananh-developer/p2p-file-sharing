@@ -119,10 +119,25 @@ public final class SharedDirectoryService {
     }
 
     /**
-     * Opens a shared file without following symbolic links. The returned handle
-     * pins the already-validated file descriptor for the duration of a transfer.
+     * Opens a shared file and computes its SHA-256 for metadata / full-file transfers.
      */
     public SharedFileSource openFile(String fileName) {
+        return openFileInternal(fileName, null, true);
+    }
+
+    /**
+     * Opens a validated file for one range request without re-hashing the whole
+     * file. The receiver verifies the complete reassembled file against the hash
+     * obtained from requestFileInfo, so a changed source cannot be accepted.
+     */
+    public SharedFileSource openFileRange(String fileName, long expectedSize) {
+        if (expectedSize < 0) {
+            throw new PeerException("INVALID_REQUEST", "A non-negative source size is required.");
+        }
+        return openFileInternal(fileName, expectedSize, false);
+    }
+
+    private SharedFileSource openFileInternal(String fileName, Long expectedSize, boolean calculateHash) {
         Path root = sharedDirectory;
         if (root == null) {
             throw new PeerException("NOT_SHARING", "No shared directory has been configured.");
@@ -152,29 +167,38 @@ public final class SharedDirectoryService {
                     candidate, Set.<OpenOption>of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
             boolean handedOff = false;
             try {
-                long expectedSize = channel.size();
-                MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                ByteBuffer buffer = ByteBuffer.allocate(64 * 1024);
-                long hashedBytes = 0;
-                while (true) {
-                    buffer.clear();
-                    int read = channel.read(buffer);
-                    if (read < 0) {
-                        break;
-                    }
-                    if (read == 0) {
-                        continue;
-                    }
-                    hashedBytes += read;
-                    buffer.flip();
-                    digest.update(buffer);
+                long actualSize = channel.size();
+                if (expectedSize != null && actualSize != expectedSize) {
+                    throw new PeerException("FILE_CHANGED", "The source file size changed after metadata discovery.");
                 }
-                if (hashedBytes != expectedSize || channel.size() != expectedSize) {
-                    throw new PeerException("FILE_CHANGED", "The requested file changed while preparing the transfer.");
+
+                String sha256 = "";
+                if (calculateHash) {
+                    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                    ByteBuffer buffer = ByteBuffer.allocate(64 * 1024);
+                    long hashedBytes = 0;
+                    while (true) {
+                        buffer.clear();
+                        int read = channel.read(buffer);
+                        if (read < 0) {
+                            break;
+                        }
+                        if (read == 0) {
+                            continue;
+                        }
+                        hashedBytes += read;
+                        buffer.flip();
+                        digest.update(buffer);
+                    }
+                    if (hashedBytes != actualSize || channel.size() != actualSize) {
+                        throw new PeerException("FILE_CHANGED",
+                                "The requested file changed while preparing the transfer.");
+                    }
+                    sha256 = HexFormat.of().formatHex(digest.digest());
+                    channel.position(0);
                 }
-                channel.position(0);
-                SharedFileSource source = new SharedFileSource(
-                        fileName, expectedSize, HexFormat.of().formatHex(digest.digest()), channel);
+
+                SharedFileSource source = new SharedFileSource(fileName, actualSize, sha256, channel);
                 handedOff = true;
                 return source;
             } finally {

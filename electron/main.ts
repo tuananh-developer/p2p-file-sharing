@@ -300,6 +300,32 @@ function registerIpcHandlers(): void {
     return data.download;
   });
 
+  ipcMain.handle("transfer:download-multi", async (_event, input: { peerIds?: unknown; fileName?: unknown }) => {
+    requireBackendReady();
+    if (!Array.isArray(input?.peerIds) || input.peerIds.length < 1 || input.peerIds.length > 16) {
+      throw new Error("peerIds must contain between 1 and 16 peer IDs.");
+    }
+    const peerIds = [...new Set(input.peerIds.map((value) => requireUuid(value, "peerId")))];
+    const fileName = requireFileName(input?.fileName);
+    const options: OpenDialogOptions = {
+      title: "Choose the download folder",
+      properties: ["openDirectory", "createDirectory"]
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const selectedPath = result.filePaths.at(0);
+    if (result.canceled || !selectedPath) {
+      return null;
+    }
+    const data = await command<{ download: unknown }>("transfer.downloadMulti", {
+      peerIds,
+      fileName,
+      destinationDir: selectedPath
+    });
+    return data.download;
+  });
+
   ipcMain.handle("transfer:cancel", async (_event, taskId: unknown) => {
     const data = await command<{ transfer: unknown }>(
       "transfer.cancel",

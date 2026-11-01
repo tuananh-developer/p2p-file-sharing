@@ -72,6 +72,9 @@ export interface TransferSnapshot {
   receivedBytes: number;
   totalBytes: number;
   detail: string;
+  sourcePeerIds?: string[];
+  totalChunks?: number;
+  completedChunks?: number;
 }
 
 export interface BackendEvent {
@@ -103,6 +106,7 @@ export interface P2PBridgeApi {
   };
   transfer: {
     download(peerId: string, fileName: string): Promise<DownloadAccepted | null>;
+    downloadMulti(peerIds: string[], fileName: string): Promise<DownloadAccepted | null>;
     cancel(taskId: string): Promise<TransferSnapshot>;
     list(): Promise<TransferSnapshot[]>;
   };

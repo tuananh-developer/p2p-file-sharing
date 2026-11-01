@@ -49,6 +49,10 @@ public final class CommandDispatcher {
                     requiredUuid(body, "peerId"),
                     requiredText(body, "fileName"),
                     requiredText(body, "destinationDir")));
+            case "transfer.downloadMulti" -> Map.of("download", peerService.downloadFileFromPeers(
+                    optionalPeerIds(body, "peerIds"),
+                    requiredText(body, "fileName"),
+                    requiredText(body, "destinationDir")));
             case "transfer.cancel" -> Map.of("transfer",
                     peerService.cancelDownload(requiredUuid(body, "taskId")));
             case "transfer.list" -> Map.of("transfers", peerService.listTransfers());
