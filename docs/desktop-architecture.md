@@ -58,7 +58,7 @@ There is no generic `send(command, payload)` or arbitrary channel argument expos
 - `sandbox: true`
 - `nodeIntegration: false`
 - `webSecurity: true`
-- a restrictive Content Security Policy; inline style attributes are allowed only for React's numeric progress width
+- a restrictive Content Security Policy; inline styles are allowed for the Renderer progress indicator, while inline scripts remain disallowed
 - external navigation and new windows are denied
 
 The preload imports Electron only; Node process and filesystem APIs remain in Main.

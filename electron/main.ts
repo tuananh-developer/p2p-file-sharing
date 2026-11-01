@@ -7,7 +7,7 @@ import {
   type OpenDialogOptions
 } from "electron";
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
 import type { BackendEvent, BackendStatusSnapshot } from "./shared/contracts";
 
@@ -85,7 +85,7 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
       }
 
       const libDirectory = process.env.P2P_BACKEND_LIB_DIR
-        ? process.env.P2P_BACKEND_LIB_DIR
+        ? resolve(process.env.P2P_BACKEND_LIB_DIR)
         : app.isPackaged
           ? join(process.resourcesPath, "backend", "lib")
           : join(app.getAppPath(), "build", "install", "file_sharing", "lib");
@@ -104,6 +104,9 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
         env: process.env,
         startupTimeoutMs: 15_000
       });
+      if (bridge.getState() !== "READY") {
+        throw new Error("Java backend exited before the desktop bridge became ready.");
+      }
       setBackendStatus({ status: "READY" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

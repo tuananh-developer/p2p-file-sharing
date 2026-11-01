@@ -32,5 +32,5 @@ jobs:
         run: npm run typecheck
       - name: Test Java bridge process client
         run: npm test
-      - name: Build desktop app
-        run: npm run build
+      - name: Build and package Linux desktop app
+        run: npm run package:linux
