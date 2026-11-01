@@ -13,10 +13,13 @@ import com.tanh.file_sharing.model.SharedFileSnapshot;
 import com.tanh.file_sharing.model.RemoteFileSearchResult;
 import com.tanh.file_sharing.model.FileSearchError;
 import com.tanh.file_sharing.model.FileSearchResponse;
+import com.tanh.file_sharing.model.DownloadAccepted;
+import com.tanh.file_sharing.model.TransferSnapshot;
 import com.tanh.file_sharing.protocol.FramedJsonChannel;
 import com.tanh.file_sharing.protocol.PeerProtocol;
 import com.tanh.file_sharing.protocol.ProtocolException;
 import com.tanh.file_sharing.sharing.SharedDirectoryService;
+import com.tanh.file_sharing.transfer.TransferService;
 
 import java.io.IOException;
 import java.net.BindException;
@@ -62,6 +65,7 @@ public final class PeerService implements AutoCloseable {
     private final Map<UUID, RemotePeerSnapshot> knownPeers = new ConcurrentHashMap<>();
     private final java.util.Set<Socket> pendingSockets = ConcurrentHashMap.newKeySet();
     private final SharedDirectoryService sharedDirectoryService = new SharedDirectoryService();
+    private final TransferService transferService;
 
     private volatile PeerStatus status = PeerStatus.STOPPED;
     private volatile String bindAddress = "127.0.0.1";
@@ -78,6 +82,8 @@ public final class PeerService implements AutoCloseable {
         this.objectMapper = objectMapper;
         this.events = events == null ? EventPublisher.noop() : events;
         this.peerId = peerId;
+        this.transferService = new TransferService(this.events,
+                activeConnections::get, () -> status == PeerStatus.RUNNING);
     }
 
     public PeerSnapshot startPeer(String requestedBindAddress, int port) {
@@ -167,6 +173,9 @@ public final class PeerService implements AutoCloseable {
                 closeQuietly(socket);
             }
             pendingSockets.clear();
+
+            // D-03: cancel downloads before closing established peer connections.
+            cleanupFailed |= !transferService.cancelAllAndAwait(2_000);
 
             for (PeerConnection connection : List.copyOf(activeConnections.values())) {
                 try {
@@ -443,18 +452,34 @@ public final class PeerService implements AutoCloseable {
         return new FileSearchResponse(results, errors);
     }
 
+    public DownloadAccepted downloadFile(UUID remotePeerId, String fileName, String destinationDirectory) {
+        return transferService.download(remotePeerId, fileName, destinationDirectory);
+    }
+
+    public TransferSnapshot cancelDownload(UUID taskId) {
+        return transferService.cancel(taskId);
+    }
+
+    public List<TransferSnapshot> listTransfers() {
+        return transferService.listTransfers();
+    }
+
     public PeerStatus getStatus() {
         return status;
     }
 
     @Override
     public void close() {
-        if (status == PeerStatus.RUNNING || status == PeerStatus.STOPPING) {
-            try {
-                stopPeer();
-            } catch (PeerException exception) {
-                LOGGER.log(Level.WARNING, "Peer did not stop cleanly during application shutdown.", exception);
+        try {
+            if (status == PeerStatus.RUNNING || status == PeerStatus.STOPPING) {
+                try {
+                    stopPeer();
+                } catch (PeerException exception) {
+                    LOGGER.log(Level.WARNING, "Peer did not stop cleanly during application shutdown.", exception);
+                }
             }
+        } finally {
+            transferService.close();
         }
     }
 
@@ -548,7 +573,13 @@ public final class PeerService implements AutoCloseable {
     private PeerConnection createConnection(Socket socket, FramedJsonChannel channel, UUID remotePeerId,
             String remoteHost, int remotePort, ConnectionDirection direction) {
         return new PeerConnection(socket, channel, remotePeerId, remoteHost, remotePort, direction,
-                () -> connectionClosed(remotePeerId, socket), this::handleRemoteRequest);
+                () -> connectionClosed(remotePeerId, socket), this::handleRemoteRequest,
+                fileName -> {
+                    if (status != PeerStatus.RUNNING) {
+                        throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                    }
+                    return sharedDirectoryService.openFile(fileName);
+                });
     }
 
     private Map<String, Object> handleRemoteRequest(String operation, JsonNode payload) {

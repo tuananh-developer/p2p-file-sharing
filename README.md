@@ -2,7 +2,7 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Java P2P Core chịu trách nhiệm quản lý peer và truyền thông trực tiếp qua TCP. Electron/React sẽ là lớp desktop/UI giao tiếp với Java qua JSON Lines trên `stdin`/`stdout`.
 
-> **Trạng thái:** Java Core đã có vòng đời peer, kết nối TCP và file catalog cơ bản (chọn thư mục chia sẻ, liệt kê metadata, truy vấn/tìm kiếm từ peer). Repo hiện chưa có mã nguồn Electron/React; truyền nội dung file vẫn là phần tiếp theo.
+> **Trạng thái:** Java Core đã có vòng đời peer, kết nối TCP, file catalog và tải file một peer-một file với SHA-256. Repo hiện chưa có mã nguồn Electron/React; resume và tải đa nguồn chưa được triển khai.
 
 ## Tech stack
 
@@ -88,6 +88,21 @@ Tìm theo tên trên tất cả peer đang kết nối; có thể truyền `peer
 
 Kết quả `files.search` gồm `results` và `errors` riêng theo peer. Một peer không chia sẻ hoặc không phản hồi không làm mất kết quả lấy được từ các peer khác.
 
+Tải file từ một peer về thư mục đích (lệnh trả về ngay `taskId`, trạng thái tiếp tục được gửi qua event):
+
+```json
+{"id":"download-1","command":"transfer.download","payload":{"peerId":"<peer-uuid>","fileName":"report.pdf","destinationDir":"/home/user/Downloads"}}
+```
+
+Theo dõi hoặc hủy tác vụ:
+
+```json
+{"id":"transfers-1","command":"transfer.list","payload":{}}
+{"id":"cancel-1","command":"transfer.cancel","payload":{"taskId":"<task-uuid>"}}
+```
+
+File được ghi vào `.part`, xác minh kích thước và SHA-256 rồi mới đổi tên. Tên đích trùng được tự động đổi thành `name (1).ext`; file hiện hữu không bị ghi đè.
+
 Kết nối đến peer khác:
 
 ```json
@@ -135,13 +150,13 @@ Asynchronous event:
 {"type":"event","event":"connectionStatusChanged","data":{"peerId":"...","status":"CONNECTED"}}
 ```
 
-Supported commands: `peer.start`, `peer.stop`, `peer.connect`, `peer.disconnect`, `peer.status`, `peer.list`, `share.setDirectory`, `share.getDirectory`, `files.listLocal`, `files.listRemote`, `files.search`, `app.shutdown`. Legacy operation names (`startPeer`, `stopPeer`, `setSharedDirectory`, `searchFiles`, etc.) are accepted as aliases.
+Supported commands: `peer.start`, `peer.stop`, `peer.connect`, `peer.disconnect`, `peer.status`, `peer.list`, `share.setDirectory`, `share.getDirectory`, `files.listLocal`, `files.listRemote`, `files.search`, `transfer.download`, `transfer.cancel`, `transfer.list`, `app.shutdown`. Legacy operation names (`startPeer`, `stopPeer`, `setSharedDirectory`, `searchFiles`, `downloadFile`, etc.) are accepted as aliases.
 
 See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection framing contract.
 
 ## Security note
 
-MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connect may query the names and sizes of files in the selected shared directory. Default bind address is `127.0.0.1`, which limits the listener to the local machine. Only choose a LAN bind address on a trusted network and share a directory whose file names you are comfortable exposing. Do not expose the listener directly to the public Internet.
+MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connect may query metadata and download files in the selected shared directory. Default bind address is `127.0.0.1`, which limits the listener to the local machine. Only choose a LAN bind address on a trusted network and share a directory whose contents you are comfortable exposing. Do not expose the listener directly to the public Internet.
 
 ## Current MVP scope
 
@@ -154,6 +169,6 @@ MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connec
 - [x] Resource cleanup on peer stop / application shutdown
 - [x] Session-scoped shared directory selection and safe top-level file listing
 - [x] Remote file-list requests, case-insensitive search and per-peer error isolation
-- [ ] File-content transfers, progress reporting and SHA-256 verification
+- [x] Single-file transfers, progress reporting, cancellation and SHA-256 verification
 - [ ] Electron process lifecycle integration
 - [ ] React UI and preload/IPC layer
