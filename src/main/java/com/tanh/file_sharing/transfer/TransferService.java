@@ -306,7 +306,10 @@ public final class TransferService implements AutoCloseable {
             if (task.cancelled.get() || "TRANSFER_CANCELLED".equals(exception.getCode())) {
                 markCancelled(task, "Download cancelled.");
             } else {
-                markFailed(task, exception.getCode() + ": " + exception.getMessage());
+                String detail = exception.getCode() + ": " + exception.getMessage();
+                LOGGER.log(Level.WARNING,
+                        "Transfer task " + task.taskId + " for '" + task.fileName + "' failed: " + detail);
+                markFailed(task, detail);
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
