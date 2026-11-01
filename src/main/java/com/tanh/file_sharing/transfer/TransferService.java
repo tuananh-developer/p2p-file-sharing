@@ -3,7 +3,6 @@ package com.tanh.file_sharing.transfer;
 import com.tanh.file_sharing.event.EventPublisher;
 import com.tanh.file_sharing.model.DownloadAccepted;
 import com.tanh.file_sharing.model.TransferSnapshot;
-import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
 import com.tanh.file_sharing.model.TransferStatus;
 import com.tanh.file_sharing.peer.PeerConnection;
 import com.tanh.file_sharing.peer.PeerException;
@@ -27,7 +26,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Comparator;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -162,111 +160,6 @@ public final class TransferService implements AutoCloseable {
         return new DownloadAccepted(task.taskId, task.targetFileName, task.status);
     }
 
-    /** Lists valid interrupted downloads in a user-selected destination directory. */
-    public List<ResumableDownloadSnapshot> listResumableDownloads(String rawDirectory) {
-        Path directory = resolveDestination(rawDirectory);
-        List<ResumableDownloadSnapshot> snapshots = new ArrayList<>();
-        try {
-            for (Path manifestPath : ResumeManifestStore.findManifests(directory)) {
-                try {
-                    ResumeManifestStore.Manifest manifest = ResumeManifestStore.loadAndVerify(manifestPath);
-                    DownloadTask active = tasks.get(manifest.taskId());
-                    if (active != null && !active.status.isTerminal()) {
-                        continue;
-                    }
-                    snapshots.add(new ResumableDownloadSnapshot(
-                            manifest.taskId(), manifest.fileName(), manifest.targetFileName(),
-                            manifest.totalBytes(), manifest.completedBytes(),
-                            manifest.totalChunks(), manifest.completedChunks()));
-                } catch (IOException | RuntimeException exception) {
-                    LOGGER.log(Level.WARNING, "Ignoring invalid resume manifest " + manifestPath, exception);
-                }
-            }
-        } catch (IOException exception) {
-            throw new PeerException("RESUME_SCAN_FAILED",
-                    "Could not scan the selected destination for interrupted downloads.", exception);
-        }
-        snapshots.sort(Comparator.comparing(snapshot -> snapshot.taskId().toString()));
-        return List.copyOf(snapshots);
-    }
-
-    /** Resumes only ranges whose saved per-range hashes still match the partial file. */
-    public DownloadAccepted resume(
-            UUID taskId, List<UUID> candidatePeerIds, String rawDirectory) {
-        if (taskId == null || candidatePeerIds == null || candidatePeerIds.isEmpty()
-                || candidatePeerIds.size() > MAX_MULTI_SOURCE_PEERS
-                || candidatePeerIds.stream().anyMatch(java.util.Objects::isNull)) {
-            throw new PeerException("INVALID_ARGUMENT", "A task ID and between 1 and "
-                    + MAX_MULTI_SOURCE_PEERS + " candidate peer IDs are required.");
-        }
-        if (closed || !peerRunning.getAsBoolean()) {
-            throw new PeerException("PEER_NOT_RUNNING", "Start the local peer before resuming a download.");
-        }
-        DownloadTask existing = tasks.get(taskId);
-        if (existing != null && !existing.status.isTerminal()) {
-            throw new PeerException("TASK_ALREADY_ACTIVE", "This download is already active.");
-        }
-        List<UUID> peers = List.copyOf(new LinkedHashSet<>(candidatePeerIds));
-        List<UUID> availablePeers = peers.stream()
-                .filter(id -> {
-                    PeerConnection connection = connectionLookup.apply(id);
-                    return connection != null && !connection.isClosed();
-                }).toList();
-        if (availablePeers.isEmpty()) {
-            throw new PeerException("PEER_NOT_CONNECTED", "Connect to at least one source peer before resuming.");
-        }
-
-        Path directory = resolveDestination(rawDirectory);
-        ResumeManifestStore.Manifest manifest = null;
-        Path manifestPath = null;
-        try {
-            for (Path candidate : ResumeManifestStore.findManifests(directory)) {
-                ResumeManifestStore.Manifest loaded = ResumeManifestStore.loadAndVerify(candidate);
-                if (loaded.taskId().equals(taskId)) {
-                    manifest = loaded;
-                    manifestPath = candidate;
-                    break;
-                }
-            }
-        } catch (IOException exception) {
-            throw new PeerException("RESUME_METADATA_INVALID",
-                    "Could not validate the interrupted download metadata.", exception);
-        }
-        if (manifest == null || manifestPath == null) {
-            throw new PeerException("RESUME_NOT_FOUND",
-                    "No valid interrupted download with this task ID exists in the selected folder.");
-        }
-
-        Path partPath = ResumeManifestStore.partPathFor(manifestPath);
-        Path targetPath = directory.resolve(manifest.targetFileName());
-        synchronized (destinationLock) {
-            if (Files.exists(targetPath, LinkOption.NOFOLLOW_LINKS) || reservedTargets.contains(targetPath)) {
-                throw new PeerException("DESTINATION_CONFLICT",
-                        "The original destination filename now exists; refusing to overwrite it.");
-            }
-            reservedTargets.add(targetPath);
-        }
-
-        ReservedTarget target = new ReservedTarget(manifest.targetFileName(), targetPath, partPath);
-        DownloadTask task = new DownloadTask(taskId, availablePeers, manifest.fileName(),
-                target, true, manifest, manifestPath);
-        task.totalBytes = manifest.totalBytes();
-        task.totalChunks = manifest.totalChunks();
-        task.completedChunks = manifest.completedChunks();
-        task.receivedBytes = manifest.completedBytes();
-        task.detail = "Resume queued; revalidating source metadata.";
-        tasks.put(taskId, task);
-        publishStatus(task, task.detail);
-        try {
-            task.future = executor.submit(() -> runDownload(task));
-        } catch (RuntimeException exception) {
-            tasks.remove(taskId, task);
-            releaseTarget(task);
-            throw new PeerException("TRANSFER_QUEUE_FAILED", "Could not queue the resumed download.", exception);
-        }
-        return new DownloadAccepted(task.taskId, task.targetFileName, task.status);
-    }
-
     public TransferSnapshot cancel(UUID taskId) {
         DownloadTask task = tasks.get(taskId);
         if (task == null) {
@@ -335,7 +228,7 @@ public final class TransferService implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
-        pauseAllAndAwait(5_000);
+        cancelAllAndAwait(2_000);
         executor.shutdownNow();
         rangeExecutor.shutdownNow();
     }
@@ -348,20 +241,70 @@ public final class TransferService implements AutoCloseable {
             if (task.cancelled.get()) {
                 return;
             }
-            if (task.pauseRequested.get()) {
-                markPausedOrCancelled(task, "Download paused for application shutdown.");
-                return;
-            }
             if (!peerRunning.getAsBoolean()) {
                 throw new PeerException("PEER_NOT_RUNNING", "The local peer stopped before the download began.");
             }
-            // All downloads use the same ranged engine so every transfer can be resumed.
-            runMultiSourceDownload(task);
+            if (task.multiSource) {
+                runMultiSourceDownload(task);
+                return;
+            }
+            transition(task, TransferStatus.CONNECTING, "Connecting to file source.");
+
+            PeerConnection connection = connectionLookup.apply(task.peerId);
+            if (connection == null || connection.isClosed()) {
+                throw new PeerException("PEER_NOT_CONNECTED", "The file source disconnected before the download began.");
+            }
+
+            MessageDigest digest = sha256Digest();
+            try (OutputStream output = Files.newOutputStream(
+                    task.partPath, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                connection.downloadFile(task.fileName, new PeerConnection.DownloadSink() {
+                    @Override
+                    public void onMetadata(PeerConnection.FileMetadata metadata) {
+                        if (!task.fileName.equals(metadata.fileName())) {
+                            throw new PeerException("INVALID_PEER_RESPONSE", "The peer returned a different file name.");
+                        }
+                        task.totalBytes = metadata.size();
+                        task.expectedSha256 = metadata.sha256();
+                        transition(task, TransferStatus.TRANSFERRING, "Receiving file data.");
+                    }
+
+                    @Override
+                    public void onChunk(byte[] bytes) throws IOException {
+                        if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                            throw new PeerException("TRANSFER_CANCELLED", "The download was cancelled.");
+                        }
+                        output.write(bytes);
+                        digest.update(bytes);
+                        task.receivedBytes += bytes.length;
+                        events.publish("transferProgress", Map.of(
+                                "taskId", task.taskId.toString(),
+                                "receivedBytes", task.receivedBytes,
+                                "totalBytes", task.totalBytes,
+                                "percent", task.totalBytes == 0 ? 100.0
+                                        : Math.min(100.0, task.receivedBytes * 100.0 / task.totalBytes)));
+                    }
+                }, 5_000, task.cancelled::get);
+                output.flush();
+            }
+
+            if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                throw new PeerException("TRANSFER_CANCELLED", "The download was cancelled.");
+            }
+            if (task.receivedBytes != task.totalBytes) {
+                throw new PeerException("TRANSFER_SIZE_MISMATCH", "The received byte count does not match the source.");
+            }
+
+            transition(task, TransferStatus.VERIFYING, "Verifying SHA-256.");
+            String actualHash = HexFormat.of().formatHex(digest.digest());
+            if (!actualHash.equalsIgnoreCase(task.expectedSha256)) {
+                throw new PeerException("INTEGRITY_CHECK_FAILED", "SHA-256 verification failed.");
+            }
+
+            completeDownload(task);
         } catch (PeerException exception) {
-            if (task.cancelled.get()) {
+            if (task.cancelled.get() || "TRANSFER_CANCELLED".equals(exception.getCode())) {
                 markCancelled(task, "Download cancelled.");
-            } else if (task.pauseRequested.get() || isResumableInterruption(task, exception)) {
-                markPausedOrCancelled(task, exception.getCode() + ": " + exception.getMessage());
             } else {
                 String detail = exception.getCode() + ": " + exception.getMessage();
                 LOGGER.log(Level.WARNING,
@@ -370,27 +313,24 @@ public final class TransferService implements AutoCloseable {
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            if (task.pauseRequested.get()) {
-                markPausedOrCancelled(task, "Download paused for application shutdown.");
-            } else {
-                markCancelled(task, "Download cancelled.");
-            }
+            markCancelled(task, "Download cancelled.");
         } catch (IOException exception) {
-            LOGGER.log(Level.WARNING, "Download task " + task.taskId + " failed.", exception);
-            markFailed(task, "FILE_IO_ERROR: Could not persist or write the downloaded file.");
+            if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                markCancelled(task, "Download cancelled.");
+            } else {
+                LOGGER.log(Level.WARNING, "Download task " + task.taskId + " failed.", exception);
+                markFailed(task, "FILE_IO_ERROR: Could not write the downloaded file.");
+            }
         } catch (RuntimeException exception) {
             LOGGER.log(Level.WARNING, "Unexpected download failure for task " + task.taskId, exception);
             if (task.cancelled.get()) {
                 markCancelled(task, "Download cancelled.");
-            } else if (task.pauseRequested.get() && task.resumeManifest != null) {
-                markPausedOrCancelled(task, "Download paused for application shutdown.");
             } else {
                 markFailed(task, "INTERNAL_ERROR: The download could not be completed.");
             }
         } finally {
-            if (task.status != TransferStatus.COMPLETED && task.status != TransferStatus.PAUSED) {
+            if (task.status != TransferStatus.COMPLETED) {
                 deletePartQuietly(task.partPath);
-                deletePartQuietly(task.resumeManifestPath);
             }
             releaseTarget(task);
             synchronized (task.lock) {
@@ -398,59 +338,6 @@ public final class TransferService implements AutoCloseable {
             }
             task.finished.countDown();
         }
-    }
-
-    private static boolean isResumableInterruption(DownloadTask task, PeerException exception) {
-        if (task.resumeManifest == null) {
-            return false;
-        }
-        return !java.util.Set.of("INTEGRITY_CHECK_FAILED", "SOURCE_MISMATCH",
-                "FILE_IO_ERROR", "TRANSFER_SIZE_MISMATCH").contains(exception.getCode());
-    }
-
-    private void markPausedOrCancelled(DownloadTask task, String detail) {
-        if (task.resumeManifest == null) {
-            markCancelled(task, "Download stopped before resumable metadata was saved.");
-            return;
-        }
-        synchronized (task.lock) {
-            if (task.status.isTerminal() && task.status != TransferStatus.PAUSED) {
-                return;
-            }
-            task.status = TransferStatus.PAUSED;
-            task.detail = detail + " Completed ranges are saved and can be resumed.";
-            publishStatus(task, task.detail);
-        }
-    }
-
-    /** Pauses active downloads without deleting their verified ranges. */
-    public boolean pauseAllAndAwait(long timeoutMillis) {
-        List<DownloadTask> active = tasks.values().stream()
-                .filter(task -> task.finished.getCount() > 0)
-                .toList();
-        for (DownloadTask task : active) {
-            task.pauseRequested.set(true);
-            Thread worker = task.worker;
-            if (worker != null) {
-                worker.interrupt();
-            }
-        }
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-        for (DownloadTask task : active) {
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0) {
-                return false;
-            }
-            try {
-                if (!task.finished.await(remaining, TimeUnit.NANOSECONDS)) {
-                    return false;
-                }
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-        }
-        return true;
     }
 
     private void runMultiSourceDownload(DownloadTask task) throws InterruptedException, IOException {
@@ -517,35 +404,63 @@ public final class TransferService implements AutoCloseable {
                 .map(PeerSourceInfo::peerId)
                 .sorted(Comparator.comparing(UUID::toString))
                 .toList();
+        if (task.resumeManifest != null
+                && (metadata.size() != task.resumeManifest.totalBytes()
+                || !metadata.sha256().equalsIgnoreCase(task.resumeManifest.sha256()))) {
+            throw new PeerException("SOURCE_MISMATCH",
+                    "The connected peers no longer have the exact file version saved for this interrupted download.");
+        }
         task.sourcePeerIds = selectedPeerIds;
         task.totalBytes = metadata.size();
         task.expectedSha256 = metadata.sha256();
         task.totalChunks = metadata.size() == 0 ? 0
                 : metadata.size() / RANGE_CHUNK_BYTES
                         + (metadata.size() % RANGE_CHUNK_BYTES == 0 ? 0 : 1);
-        transition(task, TransferStatus.TRANSFERRING,
-                "Downloading " + task.totalChunks + " ranges from " + selectedPeerIds.size() + " matching peer(s).");
 
-        AtomicLong completedBytes = new AtomicLong();
-        AtomicLong completedChunks = new AtomicLong();
-        try (FileChannel output = FileChannel.open(
-                task.partPath, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            long nextChunk = 0;
-            while (nextChunk < task.totalChunks) {
-                if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
-                    throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+        if (task.resumeManifest == null) {
+            task.resumeManifest = ResumeManifestStore.create(
+                    task.taskId, task.fileName, task.targetFileName,
+                    metadata.size(), metadata.sha256(), RANGE_CHUNK_BYTES);
+            task.resumeManifestPath = ResumeManifestStore.manifestPath(task.partPath);
+            ResumeManifestStore.save(task.resumeManifestPath, task.resumeManifest);
+        } else if (task.resumeManifest.chunkBytes() != RANGE_CHUNK_BYTES
+                || task.resumeManifest.totalChunks() != task.totalChunks) {
+            throw new PeerException("RESUME_METADATA_INVALID",
+                    "The saved range layout is incompatible with this application version.");
+        }
+
+        try (FileChannel output = FileChannel.open(task.partPath, StandardOpenOption.WRITE)) {
+            if (metadata.size() > 0 && output.size() < metadata.size()) {
+                output.position(metadata.size() - 1);
+                output.write(ByteBuffer.wrap(new byte[] {0}));
+                output.force(true);
+            }
+            task.completedChunks = task.resumeManifest.completedChunks();
+            task.receivedBytes = task.resumeManifest.completedBytes();
+            transition(task, TransferStatus.TRANSFERRING,
+                    "Downloading " + task.totalChunks + " ranges; resuming "
+                            + task.completedChunks + " verified range(s).");
+
+            List<Long> pendingChunks = new ArrayList<>();
+            for (long index = 0; index < task.totalChunks; index++) {
+                if (!task.resumeManifest.isCompleted(Math.toIntExact(index))) {
+                    pendingChunks.add(index);
                 }
+            }
 
+            for (int batchStart = 0; batchStart < pendingChunks.size(); batchStart += MAX_PARALLEL_RANGES) {
+                if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
+                    throw new PeerException("TRANSFER_CANCELLED", "The download was cancelled.");
+                }
+                int batchEnd = Math.min(pendingChunks.size(), batchStart + MAX_PARALLEL_RANGES);
                 List<Future<?>> batch = new ArrayList<>();
-                int batchSize = (int) Math.min(MAX_PARALLEL_RANGES, task.totalChunks - nextChunk);
-                for (int index = 0; index < batchSize; index++) {
-                    long chunkIndex = nextChunk + index;
+                for (int pendingIndex = batchStart; pendingIndex < batchEnd; pendingIndex++) {
+                    long chunkIndex = pendingChunks.get(pendingIndex);
                     long offset = chunkIndex * RANGE_CHUNK_BYTES;
                     long length = Math.min(RANGE_CHUNK_BYTES, metadata.size() - offset);
                     batch.add(rangeExecutor.submit(() -> {
-                        downloadRangeWithFailover(
-                                task, metadata, selectedPeerIds, output, chunkIndex, offset, length,
-                                completedBytes, completedChunks);
+                        downloadRangeWithFailover(task, metadata, selectedPeerIds, output,
+                                chunkIndex, offset, length);
                         return null;
                     }));
                 }
@@ -569,28 +484,28 @@ public final class TransferService implements AutoCloseable {
                     batch.forEach(future -> future.cancel(true));
                     throw exception;
                 }
-                nextChunk += batchSize;
             }
             output.force(true);
         }
 
         if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
-            throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+            throw new PeerException("TRANSFER_CANCELLED", "The download was cancelled.");
         }
         if (Files.size(task.partPath) != metadata.size()
-                || completedBytes.get() != metadata.size()
-                || completedChunks.get() != task.totalChunks) {
+                || task.resumeManifest.completedBytes() != metadata.size()
+                || task.resumeManifest.completedChunks() != task.totalChunks) {
             throw new PeerException("TRANSFER_SIZE_MISMATCH",
-                    "The downloaded ranges do not cover the complete source file.");
+                    "The saved ranges do not cover the complete source file.");
         }
 
         transition(task, TransferStatus.VERIFYING, "Verifying assembled file SHA-256.");
         String actualHash = sha256(task.partPath);
         if (!actualHash.equalsIgnoreCase(metadata.sha256())) {
             throw new PeerException("INTEGRITY_CHECK_FAILED",
-                    "The assembled multi-source file does not match the source SHA-256.");
+                    "The assembled file does not match the source SHA-256.");
         }
         task.receivedBytes = metadata.size();
+        task.completedChunks = task.totalChunks;
         completeDownload(task);
     }
 
@@ -601,14 +516,12 @@ public final class TransferService implements AutoCloseable {
             FileChannel output,
             long chunkIndex,
             long offset,
-            long length,
-            AtomicLong completedBytes,
-            AtomicLong completedChunks) throws IOException, InterruptedException {
+            long length) throws IOException, InterruptedException {
         PeerException lastFailure = null;
         int startIndex = (int) (chunkIndex % peerIds.size());
         for (int attempt = 0; attempt < peerIds.size(); attempt++) {
             if (task.cancelled.get() || Thread.currentThread().isInterrupted()) {
-                throw new PeerException("TRANSFER_CANCELLED", "The multi-source download was cancelled.");
+                throw new PeerException("TRANSFER_CANCELLED", "The range transfer was cancelled.");
             }
 
             UUID peerId = peerIds.get((startIndex + attempt) % peerIds.size());
@@ -620,8 +533,6 @@ public final class TransferService implements AutoCloseable {
             }
 
             try {
-                // A logical range spans many wire chunks. Keep the write cursor
-                // across callbacks so later chunks append within this range.
                 long[] nextWritePosition = {offset};
                 connection.downloadFileRange(metadata, offset, length, new PeerConnection.DownloadSink() {
                     @Override
@@ -659,18 +570,22 @@ public final class TransferService implements AutoCloseable {
                         }
                         nextWritePosition[0] = position;
                     }
-                }, 5_000, task.cancelled::get);
+                }, 5_000, () -> task.cancelled.get() || task.pauseRequested.get());
 
                 if (nextWritePosition[0] != offset + length) {
                     throw new PeerException("FILE_IO_ERROR",
                             "The receiver did not write the complete range interval.");
                 }
 
-                completedBytes.addAndGet(length);
-                completedChunks.incrementAndGet();
-                synchronized (task.progressLock) {
-                    task.receivedBytes = completedBytes.get();
-                    task.completedChunks = completedChunks.get();
+                // Force range bytes before recording the range as complete. A crash
+                // between these operations merely causes a safe re-download.
+                output.force(false);
+                String rangeHash = ResumeManifestStore.hashRange(task.partPath, offset, length);
+                synchronized (task.resumeLock) {
+                    task.resumeManifest.chunkHashes().set(Math.toIntExact(chunkIndex), rangeHash);
+                    ResumeManifestStore.save(task.resumeManifestPath, task.resumeManifest);
+                    task.receivedBytes = task.resumeManifest.completedBytes();
+                    task.completedChunks = task.resumeManifest.completedChunks();
                     events.publish("transferProgress", Map.of(
                             "taskId", task.taskId.toString(),
                             "receivedBytes", task.receivedBytes,
@@ -683,6 +598,7 @@ public final class TransferService implements AutoCloseable {
                 return;
             } catch (PeerException exception) {
                 if (task.cancelled.get()
+                        || task.pauseRequested.get()
                         || "TRANSFER_CANCELLED".equals(exception.getCode())
                         || "FILE_IO_ERROR".equals(exception.getCode())) {
                     throw exception;
