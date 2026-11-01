@@ -355,6 +355,15 @@ class PeerServiceTest {
             var completed = receiver.listTransfers().stream()
                     .filter(task -> task.taskId().equals(accepted.taskId()))
                     .findFirst().orElseThrow();
+            if (completed.status() != com.tanh.file_sharing.model.TransferStatus.COMPLETED) {
+                System.err.println("MULTI_SOURCE_DIAGNOSTIC status=" + completed.status()
+                        + " detail=" + completed.detail()
+                        + " receivedBytes=" + completed.receivedBytes()
+                        + " totalBytes=" + completed.totalBytes()
+                        + " completedChunks=" + completed.completedChunks()
+                        + " totalChunks=" + completed.totalChunks()
+                        + " sources=" + completed.sourcePeerIds());
+            }
             assertEquals(
                     com.tanh.file_sharing.model.TransferStatus.COMPLETED,
                     completed.status(),
