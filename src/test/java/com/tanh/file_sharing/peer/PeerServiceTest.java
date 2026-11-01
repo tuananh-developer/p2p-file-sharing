@@ -350,11 +350,13 @@ class PeerServiceTest {
 
             await(() -> receiver.listTransfers().stream().anyMatch(task ->
                     task.taskId().equals(accepted.taskId())
-                            && task.status() == com.tanh.file_sharing.model.TransferStatus.COMPLETED));
+                            && task.status().isTerminal()));
 
             var completed = receiver.listTransfers().stream()
                     .filter(task -> task.taskId().equals(accepted.taskId()))
                     .findFirst().orElseThrow();
+            assertEquals(com.tanh.file_sharing.model.TransferStatus.COMPLETED,
+                    completed.status(), completed.detail());
             assertArrayEquals(content,
                     java.nio.file.Files.readAllBytes(destination.resolve(accepted.targetFileName())));
             assertEquals("preserve-existing",
