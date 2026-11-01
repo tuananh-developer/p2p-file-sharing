@@ -406,3 +406,6 @@ app.on("before-quit", (event) => {
   isQuitting = true;
   void bridge.shutdown(3_000).finally(() => app.exit(0));
 });
+
+process.on("SIGINT", () => app.quit());
+process.on("SIGTERM", () => app.quit());
