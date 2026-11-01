@@ -426,9 +426,12 @@ public final class TransferService implements AutoCloseable {
                     long chunkIndex = nextChunk + index;
                     long offset = chunkIndex * RANGE_CHUNK_BYTES;
                     long length = Math.min(RANGE_CHUNK_BYTES, metadata.size() - offset);
-                    batch.add(rangeExecutor.submit(() -> downloadRangeWithFailover(
-                            task, metadata, selectedPeerIds, output, chunkIndex, offset, length,
-                            completedBytes, completedChunks)));
+                    batch.add(rangeExecutor.submit(() -> {
+                        downloadRangeWithFailover(
+                                task, metadata, selectedPeerIds, output, chunkIndex, offset, length,
+                                completedBytes, completedChunks);
+                        return null;
+                    }));
                 }
 
                 try {
