@@ -11,6 +11,7 @@ import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ResumeManifestStoreTest {
     @TempDir
