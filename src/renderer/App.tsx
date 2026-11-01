@@ -369,7 +369,7 @@ function App() {
                 <input type="number" min="1" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} />
               </label>
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || busy["peer-start"]}>
+                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || busy["peer-start"]}>
                   {busy["peer-start"] ? "Starting…" : "Start peer"}
                 </button>
                 <button className="button button-danger" type="button" onClick={handleStopPeer} disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-stop"]}>
@@ -485,7 +485,7 @@ function App() {
             </div>
             <form className="search-form" onSubmit={handleSearch}>
               <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search by file name…" disabled={backend.status !== "READY"} />
-              <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || busy["file-search"]}>
+              <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["file-search"]}>
                 {busy["file-search"] ? "Searching…" : "Search"}
               </button>
             </form>

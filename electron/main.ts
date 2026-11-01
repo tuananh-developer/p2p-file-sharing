@@ -360,11 +360,10 @@ function createWindow(): void {
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
-    const allowed = !app.isPackaged && navigationUrl.startsWith("http://127.0.0.1:5173");
-    if (!allowed && !navigationUrl.startsWith("file://")) {
-      event.preventDefault();
-    }
+  // The app is a single-page renderer; deny all renderer-initiated navigation.
+  // Initial loadURL/loadFile calls below are initiated by the trusted Main process.
+  mainWindow.webContents.on("will-navigate", (event) => {
+    event.preventDefault();
   });
 
   if (!app.isPackaged && process.env.VITE_RENDERER_URL) {
