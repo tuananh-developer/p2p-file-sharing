@@ -43,7 +43,8 @@ final class ResumeManifestStore {
         }
 
         long totalChunks() {
-            return totalBytes == 0 ? 0 : (totalBytes + chunkBytes - 1) / chunkBytes;
+            return totalBytes == 0 ? 0
+                    : totalBytes / chunkBytes + (totalBytes % chunkBytes == 0 ? 0 : 1);
         }
 
         long completedChunks() {
@@ -75,7 +76,12 @@ final class ResumeManifestStore {
 
     static Manifest create(UUID taskId, String fileName, String targetFileName,
             long totalBytes, String sha256, int chunkBytes) {
-        int chunks = totalBytes == 0 ? 0 : Math.toIntExact((totalBytes + chunkBytes - 1) / chunkBytes);
+        long chunkCount = totalBytes == 0 ? 0
+                : totalBytes / chunkBytes + (totalBytes % chunkBytes == 0 ? 0 : 1);
+        if (chunkCount > 1_000_000) {
+            throw new IllegalArgumentException("Too many ranges for a resumable manifest.");
+        }
+        int chunks = Math.toIntExact(chunkCount);
         return new Manifest(taskId, fileName, targetFileName, totalBytes, sha256,
                 chunkBytes, new ArrayList<>(java.util.Collections.nCopies(chunks, "")));
     }
@@ -113,7 +119,8 @@ final class ResumeManifestStore {
                 || !sha256.matches("[0-9a-f]{64}")) {
             throw new IOException("Invalid file metadata in resume manifest.");
         }
-        long chunkCountLong = totalBytes == 0 ? 0 : (totalBytes + chunkBytes - 1) / chunkBytes;
+        long chunkCountLong = totalBytes == 0 ? 0
+                : totalBytes / chunkBytes + (totalBytes % chunkBytes == 0 ? 0 : 1);
         if (chunkCountLong > 1_000_000) {
             throw new IOException("Resume manifest contains too many chunks.");
         }

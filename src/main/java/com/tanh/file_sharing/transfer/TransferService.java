@@ -534,6 +534,10 @@ public final class TransferService implements AutoCloseable {
         task.totalChunks = metadata.size() == 0 ? 0
                 : metadata.size() / RANGE_CHUNK_BYTES
                         + (metadata.size() % RANGE_CHUNK_BYTES == 0 ? 0 : 1);
+        if (task.totalChunks > 1_000_000) {
+            throw new PeerException("FILE_TOO_LARGE",
+                    "The file requires too many resumable ranges for the current manifest format.");
+        }
 
         if (task.resumeManifest == null) {
             task.resumeManifest = ResumeManifestStore.create(
@@ -767,15 +771,33 @@ public final class TransferService implements AutoCloseable {
                 ReservedTarget next = reserveNextTarget(task.destination, task.fileName);
                 Path oldManifest = task.resumeManifestPath;
                 Path nextManifest = ResumeManifestStore.manifestPath(next.partPath);
+                boolean partMoved = false;
                 try {
                     Files.move(oldPart, next.partPath);
+                    partMoved = true;
                     if (oldManifest != null && Files.exists(oldManifest, LinkOption.NOFOLLOW_LINKS)) {
-                        Files.move(oldManifest, nextManifest, StandardCopyOption.REPLACE_EXISTING);
+                        Files.move(oldManifest, nextManifest);
+                        task.resumeManifest = new ResumeManifestStore.Manifest(
+                                task.resumeManifest.taskId(), task.resumeManifest.fileName(),
+                                next.fileName, task.resumeManifest.totalBytes(),
+                                task.resumeManifest.sha256(), task.resumeManifest.chunkBytes(),
+                                task.resumeManifest.chunkHashes());
+                        ResumeManifestStore.save(nextManifest, task.resumeManifest);
                     }
                 } catch (FileAlreadyExistsException partCollision) {
+                    if (partMoved) {
+                        Files.move(next.partPath, oldPart);
+                    }
                     releaseTargetPath(next.targetPath);
                     continue;
                 } catch (IOException moveFailure) {
+                    if (partMoved && Files.exists(next.partPath, LinkOption.NOFOLLOW_LINKS)) {
+                        try {
+                            Files.move(next.partPath, oldPart);
+                        } catch (IOException rollbackFailure) {
+                            moveFailure.addSuppressed(rollbackFailure);
+                        }
+                    }
                     releaseTargetPath(next.targetPath);
                     throw moveFailure;
                 }
@@ -822,6 +844,7 @@ public final class TransferService implements AutoCloseable {
                 Path part = destination.resolve(candidate + ".part");
                 if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
                         || Files.exists(part, LinkOption.NOFOLLOW_LINKS)
+                        || Files.exists(ResumeManifestStore.manifestPath(part), LinkOption.NOFOLLOW_LINKS)
                         || reservedTargets.contains(target)) {
                     continue;
                 }
