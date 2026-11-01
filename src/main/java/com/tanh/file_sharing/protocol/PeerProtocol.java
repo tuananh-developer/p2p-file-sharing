@@ -14,6 +14,9 @@ public final class PeerProtocol {
     public static final String HANDSHAKE_REJECTED = "handshakeRejected";
     public static final String CLOSE_CONNECTION = "closeConnection";
     public static final String CLOSE_ACKNOWLEDGED = "closeAcknowledged";
+    public static final String REQUEST = "request";
+    public static final String RESPONSE = "response";
+    public static final String REQUEST_FILE_LIST = "requestFileList";
 
     private PeerProtocol() {
     }
@@ -46,6 +49,40 @@ public final class PeerProtocol {
 
     public static Map<String, Object> closeAcknowledged() {
         return Map.of("type", CLOSE_ACKNOWLEDGED, "protocolVersion", VERSION);
+    }
+
+    public static Map<String, Object> request(String requestId, String operation, Object payload) {
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", REQUEST);
+        frame.put("protocolVersion", VERSION);
+        frame.put("requestId", requestId);
+        frame.put("operation", operation);
+        frame.put("payload", payload == null ? Map.of() : payload);
+        return frame;
+    }
+
+    public static Map<String, Object> successResponse(String requestId, Object data) {
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", RESPONSE);
+        frame.put("protocolVersion", VERSION);
+        frame.put("requestId", requestId);
+        frame.put("success", true);
+        frame.put("data", data == null ? Map.of() : data);
+        return frame;
+    }
+
+    public static Map<String, Object> errorResponse(String requestId, String code, String message) {
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("code", code);
+        error.put("message", message == null ? "Peer request failed." : message);
+
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", RESPONSE);
+        frame.put("protocolVersion", VERSION);
+        frame.put("requestId", requestId);
+        frame.put("success", false);
+        frame.put("error", error);
+        return frame;
     }
 
     public static HandshakeInfo parseHandshake(JsonNode frame) throws ProtocolException {
