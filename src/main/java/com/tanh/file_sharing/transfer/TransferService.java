@@ -507,6 +507,9 @@ public final class TransferService implements AutoCloseable {
             }
 
             try {
+                // A logical range spans many wire chunks. Keep the write cursor
+                // across callbacks so later chunks append within this range.
+                long[] nextWritePosition = {offset};
                 connection.downloadFileRange(metadata, offset, length, new PeerConnection.DownloadSink() {
                     @Override
                     public void onMetadata(PeerConnection.FileMetadata received) {
@@ -522,11 +525,18 @@ public final class TransferService implements AutoCloseable {
                             throw new PeerException("TRANSFER_CANCELLED", "The range transfer was cancelled.");
                         }
                         ByteBuffer buffer = ByteBuffer.wrap(bytes);
-                        long position = offset;
+                        long position = nextWritePosition[0];
                         while (buffer.hasRemaining()) {
-                            int written = output.write(buffer, position);
+                            int written;
+                            try {
+                                written = output.write(buffer, position);
+                            } catch (IOException exception) {
+                                throw new PeerException("FILE_IO_ERROR",
+                                        "Could not write the downloaded file range.", exception);
+                            }
                             if (written < 0) {
-                                throw new IOException("Could not write the downloaded file range.");
+                                throw new PeerException("FILE_IO_ERROR",
+                                        "Could not write the downloaded file range.");
                             }
                             if (written == 0) {
                                 Thread.onSpinWait();
@@ -534,8 +544,14 @@ public final class TransferService implements AutoCloseable {
                                 position += written;
                             }
                         }
+                        nextWritePosition[0] = position;
                     }
                 }, 5_000, task.cancelled::get);
+
+                if (nextWritePosition[0] != offset + length) {
+                    throw new PeerException("FILE_IO_ERROR",
+                            "The receiver did not write the complete range interval.");
+                }
 
                 completedBytes.addAndGet(length);
                 completedChunks.incrementAndGet();
@@ -553,7 +569,9 @@ public final class TransferService implements AutoCloseable {
                 }
                 return;
             } catch (PeerException exception) {
-                if (task.cancelled.get() || "TRANSFER_CANCELLED".equals(exception.getCode())) {
+                if (task.cancelled.get()
+                        || "TRANSFER_CANCELLED".equals(exception.getCode())
+                        || "FILE_IO_ERROR".equals(exception.getCode())) {
                     throw exception;
                 }
                 lastFailure = exception;
