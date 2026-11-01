@@ -57,16 +57,16 @@ class TransferResumeIntegrationTest {
 
             var recoverable = restartedReceiver.listResumableDownloads(destination.toString());
             assertEquals(1, recoverable.size());
-            assertEquals(taskId, recoverable.getFirst().taskId());
+            assertEquals(acceptedTaskId, recoverable.getFirst().taskId());
             assertEquals(1, recoverable.getFirst().completedChunks());
             assertEquals(RANGE_BYTES, recoverable.getFirst().receivedBytes());
 
             var accepted = restartedReceiver.resumeDownload(
-                    taskId, List.of(connected.peerId()), destination.toString());
-            assertEquals(taskId, accepted.taskId());
+                    acceptedTaskId, List.of(connected.peerId()), destination.toString());
+            assertEquals(acceptedTaskId, accepted.taskId());
 
             await(() -> restartedReceiver.listTransfers().stream()
-                    .anyMatch(task -> task.taskId().equals(taskId) && task.status().isTerminal()));
+                    .anyMatch(task -> task.taskId().equals(acceptedTaskId) && task.status().isTerminal()));
             var completed = restartedReceiver.listTransfers().stream()
                     .filter(task -> task.taskId().equals(taskId))
                     .findFirst().orElseThrow();
@@ -107,7 +107,6 @@ class TransferResumeIntegrationTest {
         PeerService firstReceiver = new PeerService(new ObjectMapper(), blockingEvents);
         PeerService restartedSource = null;
         PeerService restartedReceiver = null;
-        UUID taskId = null;
         Path manifestPath = ResumeManifestStore.manifestPath(destination.resolve("large-archive.bin.part"));
         try {
             int sourcePort = availablePort();
@@ -119,7 +118,7 @@ class TransferResumeIntegrationTest {
 
             var accepted = firstReceiver.downloadFileFromPeers(
                     List.of(sourcePeer.peerId()), "large-archive.bin", destination.toString());
-            taskId = accepted.taskId();
+            UUID acceptedTaskId = accepted.taskId();
             assertTrue(firstRangeSaved.await(15, TimeUnit.SECONDS),
                     "The first verified range should be persisted before shutdown.");
 
@@ -153,7 +152,7 @@ class TransferResumeIntegrationTest {
 
             restartedReceiver.resumeDownload(
                     taskId, List.of(newConnection.peerId()), destination.toString());
-            UUID resumedTaskId = taskId;
+            UUID resumedTaskId = acceptedTaskId;
             await(() -> restartedReceiver.listTransfers().stream()
                     .anyMatch(task -> task.taskId().equals(resumedTaskId) && task.status().isTerminal()));
 
