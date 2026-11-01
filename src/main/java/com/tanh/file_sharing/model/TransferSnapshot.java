@@ -14,8 +14,8 @@ public record TransferSnapshot(
         long totalBytes,
         String detail,
         List<UUID> sourcePeerIds,
-        int totalChunks,
-        int completedChunks) {
+        long totalChunks,
+        long completedChunks) {
     public TransferSnapshot {
         sourcePeerIds = sourcePeerIds == null ? List.of() : List.copyOf(sourcePeerIds);
     }
