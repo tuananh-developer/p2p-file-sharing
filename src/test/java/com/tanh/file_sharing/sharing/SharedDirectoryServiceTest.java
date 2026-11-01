@@ -67,6 +67,25 @@ class SharedDirectoryServiceTest {
     }
 
     @Test
+    void opensOnlyAValidatedDirectChildAndProvidesSha256Metadata() throws Exception {
+        Path shared = Files.createDirectory(temporaryDirectory.resolve("source-open"));
+        byte[] content = "verified-content".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(shared.resolve("verified.txt"), content);
+        SharedDirectoryService service = new SharedDirectoryService();
+        service.setDirectory(shared.toString());
+
+        try (SharedFileSource source = service.openFile("verified.txt")) {
+            assertEquals("verified.txt", source.fileName());
+            assertEquals(content.length, source.size());
+            assertEquals("fbcca5abece3437d2a17bda55c13f39e0fdc7039596282d0ebf5ec277577b3bb", source.sha256());
+        }
+
+        PeerException traversal = assertThrows(PeerException.class,
+                () -> service.openFile("../outside.txt"));
+        assertEquals("FILE_UNAVAILABLE", traversal.getCode());
+    }
+
+    @Test
     void requiresAConfiguredDirectoryBeforeListing() {
         SharedDirectoryService service = new SharedDirectoryService();
 

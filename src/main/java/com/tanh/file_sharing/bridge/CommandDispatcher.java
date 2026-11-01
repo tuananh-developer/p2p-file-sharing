@@ -45,6 +45,13 @@ public final class CommandDispatcher {
                 var result = peerService.searchFiles(optionalQuery(body, "keyword"), optionalPeerIds(body, "peerIds"));
                 yield Map.of("results", result.results(), "errors", result.errors());
             }
+            case "transfer.download" -> Map.of("download", peerService.downloadFile(
+                    requiredUuid(body, "peerId"),
+                    requiredText(body, "fileName"),
+                    requiredText(body, "destinationDir")));
+            case "transfer.cancel" -> Map.of("transfer",
+                    peerService.cancelDownload(requiredUuid(body, "taskId")));
+            case "transfer.list" -> Map.of("transfers", peerService.listTransfers());
             case "app.shutdown" -> shutdownApplication();
             default -> throw new PeerException("UNKNOWN_COMMAND", "Unsupported command: " + command);
         };
@@ -71,6 +78,9 @@ public final class CommandDispatcher {
             case "listLocalSharedFiles" -> "files.listLocal";
             case "listRemoteFiles" -> "files.listRemote";
             case "searchFiles" -> "files.search";
+            case "downloadFile" -> "transfer.download";
+            case "cancelDownload" -> "transfer.cancel";
+            case "listTransfers" -> "transfer.list";
             case "shutdownApplication" -> "app.shutdown";
             default -> command;
         };

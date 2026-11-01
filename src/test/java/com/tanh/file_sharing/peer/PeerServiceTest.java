@@ -207,6 +207,117 @@ class PeerServiceTest {
     }
 
     @Test
+    void downloadsMultiChunkFileVerifiesHashAndNeverOverwritesExistingDestination() throws Exception {
+        int sourcePort = availablePort();
+        int receiverPort = distinctPort(sourcePort);
+        PeerService source = new PeerService(mapper, EventPublisher.noop());
+        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+
+        Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("download-source"));
+        Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("download-target"));
+        byte[] content = new byte[96 * 1024 + 731];
+        new java.util.Random(42).nextBytes(content);
+        java.nio.file.Files.write(shared.resolve("payload.bin"), content);
+        java.nio.file.Files.writeString(destination.resolve("payload.bin"), "keep-existing-file");
+
+        try {
+            var sourceSnapshot = source.startPeer("127.0.0.1", sourcePort);
+            receiver.startPeer("127.0.0.1", receiverPort);
+            source.setSharedDirectory(shared.toString());
+            receiver.connectPeer("127.0.0.1", sourcePort);
+
+            var accepted = receiver.downloadFile(
+                    sourceSnapshot.peerId(), "payload.bin", destination.toString());
+            assertEquals("payload (1).bin", accepted.targetFileName());
+
+            await(() -> receiver.listTransfers().stream().anyMatch(task ->
+                    task.taskId().equals(accepted.taskId())
+                            && task.status() == com.tanh.file_sharing.model.TransferStatus.COMPLETED));
+
+            Path downloaded = destination.resolve(accepted.targetFileName());
+            assertArrayEquals(content, java.nio.file.Files.readAllBytes(downloaded));
+            assertEquals("keep-existing-file",
+                    java.nio.file.Files.readString(destination.resolve("payload.bin")));
+            assertFalse(java.nio.file.Files.exists(destination.resolve(accepted.targetFileName() + ".part")));
+            assertEquals(content.length, receiver.listTransfers().stream()
+                    .filter(task -> task.taskId().equals(accepted.taskId()))
+                    .findFirst().orElseThrow().receivedBytes());
+        } finally {
+            receiver.close();
+            source.close();
+        }
+    }
+
+    @Test
+    void reportsMissingRemoteFileAndDoesNotLeaveTemporaryFiles() throws Exception {
+        int sourcePort = availablePort();
+        int receiverPort = distinctPort(sourcePort);
+        PeerService source = new PeerService(mapper, EventPublisher.noop());
+        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("empty-source"));
+        Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("missing-target"));
+
+        try {
+            var sourceSnapshot = source.startPeer("127.0.0.1", sourcePort);
+            receiver.startPeer("127.0.0.1", receiverPort);
+            source.setSharedDirectory(shared.toString());
+            receiver.connectPeer("127.0.0.1", sourcePort);
+
+            var accepted = receiver.downloadFile(
+                    sourceSnapshot.peerId(), "missing.bin", destination.toString());
+            await(() -> receiver.listTransfers().stream().anyMatch(task ->
+                    task.taskId().equals(accepted.taskId())
+                            && task.status() == com.tanh.file_sharing.model.TransferStatus.FAILED));
+
+            var failed = receiver.listTransfers().stream()
+                    .filter(task -> task.taskId().equals(accepted.taskId()))
+                    .findFirst().orElseThrow();
+            assertTrue(failed.detail().contains("FILE_UNAVAILABLE"));
+            try (var files = java.nio.file.Files.list(destination)) {
+                assertEquals(0L, files.count());
+            }
+        } finally {
+            receiver.close();
+            source.close();
+        }
+    }
+
+    @Test
+    void canCancelAnActiveDownloadAndRemovesThePartialFile() throws Exception {
+        int sourcePort = availablePort();
+        int receiverPort = distinctPort(sourcePort);
+        PeerService source = new PeerService(mapper, EventPublisher.noop());
+        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("cancel-source"));
+        Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("cancel-target"));
+        byte[] content = new byte[32 * 1024 * 1024];
+        new java.util.Random(7).nextBytes(content);
+        java.nio.file.Files.write(shared.resolve("large.bin"), content);
+
+        try {
+            var sourceSnapshot = source.startPeer("127.0.0.1", sourcePort);
+            receiver.startPeer("127.0.0.1", receiverPort);
+            source.setSharedDirectory(shared.toString());
+            receiver.connectPeer("127.0.0.1", sourcePort);
+
+            var accepted = receiver.downloadFile(
+                    sourceSnapshot.peerId(), "large.bin", destination.toString());
+            receiver.cancelDownload(accepted.taskId());
+
+            await(() -> receiver.listTransfers().stream().anyMatch(task ->
+                    task.taskId().equals(accepted.taskId())
+                            && task.status() == com.tanh.file_sharing.model.TransferStatus.CANCELLED));
+            await(() -> isDirectoryEmpty(destination));
+            try (var files = java.nio.file.Files.list(destination)) {
+                assertEquals(0L, files.count());
+            }
+        } finally {
+            receiver.close();
+            source.close();
+        }
+    }
+
+    @Test
     void sharedDirectoryConfigurationIsNotPersistedBetweenPeerServiceInstances() throws Exception {
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("session-share"));
         PeerService firstSession = new PeerService(mapper, EventPublisher.noop());
@@ -220,6 +331,14 @@ class PeerServiceTest {
         } finally {
             firstSession.close();
             nextSession.close();
+        }
+    }
+
+    private static boolean isDirectoryEmpty(Path directory) {
+        try (var files = java.nio.file.Files.list(directory)) {
+            return files.findAny().isEmpty();
+        } catch (IOException exception) {
+            return false;
         }
     }
 
