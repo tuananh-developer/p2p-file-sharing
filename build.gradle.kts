@@ -1,28 +1,36 @@
 plugins {
-	java
-	id("org.springframework.boot") version "4.1.1"
-	id("io.spring.dependency-management") version "1.1.7"
+    java
+    application
 }
 
 group = "com.tanh"
-version = "0.0.1-SNAPSHOT"
+version = "0.1.0-SNAPSHOT"
 
 java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(27)
-	}
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
 }
 
 repositories {
-	mavenCentral()
+    mavenCentral()
 }
 
 dependencies {
-	implementation("org.springframework.boot:spring-boot-starter")
-	testImplementation("org.springframework.boot:spring-boot-starter-test")
-	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
 }
 
-tasks.withType<Test> {
-	useJUnitPlatform()
+application {
+    mainClass.set("com.tanh.file_sharing.FileSharingApplication")
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.encoding = "UTF-8"
+    options.release.set(21)
+}
+
+tasks.test {
+    useUnitPlatform()
 }
