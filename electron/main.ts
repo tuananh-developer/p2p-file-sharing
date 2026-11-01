@@ -82,7 +82,7 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
     setBackendStatus({ status: "STARTING" });
     try {
       if (bridge.getState() !== "STOPPED") {
-        await bridge.shutdown(1_000);
+        await bridge.shutdown(25_000);
       }
 
       const libDirectory = process.env.P2P_BACKEND_LIB_DIR
@@ -470,7 +470,7 @@ app.on("before-quit", (event) => {
   }
   event.preventDefault();
   isQuitting = true;
-  void bridge.shutdown(3_000).finally(() => app.exit(0));
+  void bridge.shutdown(25_000).finally(() => app.exit(0));
 });
 
 process.on("SIGINT", () => app.quit());
