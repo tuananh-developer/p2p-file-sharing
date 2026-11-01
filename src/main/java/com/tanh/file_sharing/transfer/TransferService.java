@@ -204,6 +204,9 @@ public final class TransferService implements AutoCloseable {
         if (existing != null && !existing.status.isTerminal()) {
             throw new PeerException("TASK_ALREADY_ACTIVE", "This download is already active.");
         }
+        if (tasks.values().stream().filter(task -> !task.status.isTerminal()).count() >= MAX_TASKS) {
+            throw new PeerException("TRANSFER_LIMIT_REACHED", "Too many active transfer tasks.");
+        }
         List<UUID> peers = List.copyOf(new LinkedHashSet<>(candidatePeerIds));
         List<UUID> availablePeers = peers.stream()
                 .filter(id -> {
@@ -219,16 +222,20 @@ public final class TransferService implements AutoCloseable {
         Path manifestPath = null;
         try {
             for (Path candidate : ResumeManifestStore.findManifests(directory)) {
-                ResumeManifestStore.Manifest loaded = ResumeManifestStore.loadAndVerify(candidate);
-                if (loaded.taskId().equals(taskId)) {
-                    manifest = loaded;
-                    manifestPath = candidate;
-                    break;
+                try {
+                    ResumeManifestStore.Manifest loaded = ResumeManifestStore.loadAndVerify(candidate);
+                    if (loaded.taskId().equals(taskId)) {
+                        manifest = loaded;
+                        manifestPath = candidate;
+                        break;
+                    }
+                } catch (IOException | RuntimeException invalidManifest) {
+                    LOGGER.log(Level.WARNING, "Ignoring invalid resume manifest " + candidate, invalidManifest);
                 }
             }
         } catch (IOException exception) {
-            throw new PeerException("RESUME_METADATA_INVALID",
-                    "Could not validate the interrupted download metadata.", exception);
+            throw new PeerException("RESUME_SCAN_FAILED",
+                    "Could not scan the selected destination for interrupted downloads.", exception);
         }
         if (manifest == null || manifestPath == null) {
             throw new PeerException("RESUME_NOT_FOUND",
@@ -402,7 +409,7 @@ public final class TransferService implements AutoCloseable {
         if (task.resumeManifest == null) {
             return false;
         }
-        return !java.util.Set.of("INTEGRITY_CHECK_FAILED", "SOURCE_MISMATCH",
+        return !java.util.Set.of("INTEGRITY_CHECK_FAILED",
                 "FILE_IO_ERROR", "TRANSFER_SIZE_MISMATCH").contains(exception.getCode());
     }
 
