@@ -1,0 +1,186 @@
+@startuml UC07_Tai_tap_tin
+title Activity Diagram — UC-07: Tải tập tin
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Người dùng|
+start
+:Chọn tập tin và peer nguồn trong kết quả tìm kiếm;
+:Chọn thư mục đích hoặc dùng thư mục lưu mặc định;
+:Nhấn Download;
+
+|React UI|
+if (Đã chọn đủ tập tin, peer nguồn và thư mục đích?) then (Có)
+  :Gửi yêu cầu tải qua API preload / IPC;
+else (Không)
+  :Thông báo cần chọn đủ thông tin;
+  stop
+endif
+
+|Electron Main / Bridge|
+if (Java backend sẵn sàng?) then (Có)
+  :Tạo requestId;
+  :Gửi command transfer.download qua JSON Lines;
+
+  |Java P2P Core / Peer nhận|
+  if (Peer cục bộ RUNNING và peer nguồn đang CONNECTED?) then (Có)
+    if (Thư mục đích tồn tại và có quyền ghi?) then (Có)
+      :Xác định tên đích, nếu đã tồn tại thì tạo tên mới không trùng;
+      note right
+        D-05: không bao giờ ghi đè tập tin có sẵn.
+      end note
+      :Tạo tác vụ trạng thái PENDING và đưa vào executor;
+      :Trả response chấp nhận kèm taskId và tên đích;
+    else (Không)
+      :Trả response lỗi thư mục đích không hợp lệ hoặc không có quyền ghi;
+    endif
+  else (Không)
+    :Trả response lỗi peer chưa chạy hoặc peer nguồn không còn kết nối;
+  endif
+
+  |Electron Main / Bridge|
+  if (Nhận response trong thời hạn?) then (Có)
+    :Đối chiếu response theo requestId;
+  else (Không)
+    :Đánh dấu kết quả chưa xác định;
+    :Đồng bộ danh sách tác vụ từ Java, không gửi lại lệnh;
+  endif
+else (Không)
+  :Tạo kết quả lỗi backend không khả dụng;
+endif
+
+|React UI|
+if (Java xác nhận tác vụ đã được chấp nhận?) then (Có)
+  :Hiển thị tác vụ ở trạng thái Đang chờ;
+else (Không / chưa xác minh)
+  :Hiển thị lỗi hoặc trạng thái chưa xác minh;
+  :Không tự tạo tác vụ giả trên giao diện;
+  stop
+endif
+
+|Java P2P Core / Peer nhận|
+:Chạy tác vụ trên luồng nền, không chặn giao diện;
+note right
+  Java khởi chạy tác vụ ngay sau khi chấp nhận lệnh,
+  độc lập với việc giao diện đã nhận response hay chưa (NFR-04).
+  Sơ đồ vẽ nối tiếp chỉ để dễ đọc.
+end note
+:Gửi yêu cầu tải đến peer nguồn kèm tên tập tin;
+note right
+  Chỉ gửi tên tập tin, không gửi đường dẫn tuyệt đối (D-02).
+end note
+
+|Peer nguồn / Peer từ xa|
+:Nhận và phân tích yêu cầu theo framing của giao thức;
+:Kiểm tra tên hợp lệ, tập tin nằm trực tiếp trong thư mục chia sẻ và đọc được;
+note right
+  Chi tiết xem Activity Diagram UC-08.
+end note
+if (Tập tin hợp lệ và đọc được?) then (Có)
+  :Gửi metadata gồm kích thước và SHA-256;
+  note right
+    Thời điểm gửi SHA-256 (đầu hay cuối luồng dữ liệu)
+    do docs/protocol.md quyết định (G-02).
+  end note
+
+  |Java P2P Core / Peer nhận|
+  :Nhận metadata;
+  if (Metadata hợp lệ và đủ dung lượng trống?) then (Có)
+    :Tạo tệp tạm cùng thư mục đích;
+    note right
+      G-01: tệp tạm có đuôi .part, chỉ đổi tên
+      sau khi kiểm tra SHA-256 đạt.
+    end note
+    :Chuyển trạng thái DOWNLOADING;
+
+    |Peer nguồn / Peer từ xa|
+    :Gửi dữ liệu tập tin trực tiếp qua TCP;
+    note right
+      Dữ liệu đi thẳng giữa hai Java P2P Core,
+      không qua React UI hay Electron (BR-05).
+    end note
+
+    |Java P2P Core / Peer nhận|
+    repeat
+      :Nhận khối dữ liệu tiếp theo;
+      if (Nhận thành công và chưa có yêu cầu hủy?) then (Có)
+        :Ghi khối vào tệp tạm;
+        :Cập nhật số byte đã nhận;
+        :Phát sự kiện tiến trình có giới hạn tần suất;
+
+        |Electron Main / Bridge|
+        :Chuyển sự kiện tiến trình;
+
+        |React UI|
+        :Cập nhật tiến trình tải;
+
+        |Java P2P Core / Peer nhận|
+      else (Không)
+        :Ghi nhận nguyên nhân dừng là hủy hoặc lỗi;
+        note right
+          Lỗi gồm peer nguồn ngắt kết nối (BR-08), quá thời hạn chờ dữ liệu,
+          lỗi I/O hoặc ổ đĩa đầy.
+          Hủy đến từ command transfer.cancel (FR-19): Java đặt cờ hủy
+          và vòng lặp kiểm tra cờ này ở mỗi lần nhận khối.
+        end note
+      endif
+    repeat while (Còn dữ liệu và tác vụ chưa dừng?) is (Có) not (Không)
+
+    if (Người dùng đã hủy tác vụ?) then (Có)
+      :Đóng luồng dữ liệu và báo peer nguồn nếu kết nối còn;
+      :Xóa tệp tạm;
+      :Chuyển trạng thái CANCELLED;
+    elseif (Có lỗi truyền hoặc ghi dữ liệu?) then (Có)
+      :Đóng luồng dữ liệu và giải phóng tài nguyên;
+      :Xóa tệp tạm;
+      :Chuyển trạng thái FAILED kèm nguyên nhân;
+    else (Nhận đủ dữ liệu)
+      :Chuyển trạng thái VERIFYING;
+      :Kiểm tra số byte nhận và tính SHA-256 của tệp tạm ở luồng nền;
+      if (Kích thước và SHA-256 khớp giá trị từ nguồn?) then (Có)
+        :Đổi tên tệp tạm thành tên đích, không ghi đè;
+        :Chuyển trạng thái COMPLETED;
+      else (Không)
+        :Xóa tệp tạm;
+        :Chuyển trạng thái FAILED do dữ liệu không hợp lệ;
+      endif
+    endif
+  else (Không)
+    :Báo peer nguồn dừng yêu cầu nếu kết nối còn;
+    :Chuyển trạng thái FAILED do metadata không hợp lệ hoặc không đủ dung lượng;
+  endif
+else (Không)
+  :Trả phản hồi lỗi: tập tin không tồn tại, ngoài phạm vi chia sẻ hoặc không đọc được;
+
+  |Java P2P Core / Peer nhận|
+  :Nhận phản hồi lỗi từ peer nguồn;
+  :Chuyển trạng thái FAILED kèm nguyên nhân;
+endif
+
+|Java P2P Core / Peer nhận|
+:Ghi log và phát sự kiện trạng thái cuối của tác vụ;
+
+|Electron Main / Bridge|
+:Chuyển sự kiện trạng thái cuối;
+
+|React UI|
+if (Java báo trạng thái cuối là COMPLETED?) then (Có)
+  :Hiển thị Hoàn tất cùng tên và vị trí tập tin;
+elseif (Java báo trạng thái cuối là CANCELLED?) then (Có)
+  :Hiển thị Đã hủy;
+else (FAILED hoặc chưa xác minh)
+  :Hiển thị Thất bại kèm nguyên nhân hoặc trạng thái chưa xác minh;
+  :Không hiển thị Hoàn tất khi chưa có xác nhận từ Java;
+endif
+
+stop
+@enduml

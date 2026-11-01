@@ -1,0 +1,89 @@
+@startuml
+ title Activity Diagram — UC-02: Dừng peer
+
+ skinparam shadowing false
+ skinparam activity {
+   BackgroundColor #F8FAFC
+   BorderColor #475569
+   DiamondBackgroundColor #E2E8F0
+   DiamondBorderColor #475569
+   StartColor #16A34A
+   EndColor #DC2626
+   FontName Arial
+ }
+
+ start
+
+ partition "Người dùng" {
+   :Nhấn **Stop Peer**;
+ }
+
+ partition "React UI" {
+   :Gửi yêu cầu dừng peer qua API preload / IPC;
+ }
+
+ partition "Electron Main / Bridge" {
+   if (Java backend đang sẵn sàng?) then (Có)
+     :Tạo requestId;
+     :Gửi command peer.stop qua JSON Lines;
+   else (Không)
+     :Tạo kết quả lỗi backend không khả dụng;
+   endif
+ }
+
+ if (Command đã được gửi đến Java?) then (Có)
+   partition "Java P2P Core" {
+     :Kiểm tra trạng thái peer thực tế;
+     if (Peer đang RUNNING?) then (Có)
+       :Chuyển trạng thái sang STOPPING;
+       :Ngừng nhận kết nối mới;
+       :Đóng listening socket;
+       :Dọn dẹp kết nối và tác vụ theo chính sách dừng đã thống nhất;
+       if (Tài nguyên cần dọn dẹp đã được giải phóng?) then (Có)
+         :Cập nhật trạng thái STOPPED;
+         :Trả response thành công kèm trạng thái;
+       else (Không)
+         :Ghi log lỗi dọn dẹp;
+         :Giữ trạng thái thực tế phù hợp;
+         :Trả response thất bại kèm trạng thái;
+       endif
+     else (Không)
+       :Không thực hiện lại thao tác đóng tài nguyên;
+       :Trả về trạng thái hiện tại;
+     endif
+   }
+
+   partition "Electron Main / Bridge" {
+     if (Nhận response trong thời hạn?) then (Có)
+       :Ghi nhận response theo requestId;
+     else (Không)
+       :Đánh dấu kết quả chưa xác định;
+       :Truy vấn trạng thái peer từ Java;
+     endif
+   }
+ else (Không)
+   partition "Electron Main / Bridge" {
+     :Giữ kết quả lỗi backend;
+   }
+ endif
+
+ partition "React UI" {
+   :Nhận kết quả hoặc trạng thái đã đồng bộ;
+   if (Trạng thái thực tế được xác nhận là STOPPED?) then (Có)
+     :Hiển thị **Stopped**;
+     :Cho phép khởi chạy peer lại;
+     stop
+   else (Không / chưa xác minh)
+     :Hiển thị lỗi hoặc trạng thái chưa xác minh;
+     :Không tự đánh dấu peer đã dừng hoàn toàn;
+     stop
+   endif
+ }
+
+ note bottom
+   Chính sách xử lý các kết nối và tác vụ truyền file đang hoạt động
+   khi dừng peer vẫn cần được nhóm chốt riêng.
+   Nếu timeout sau khi gửi lệnh, cần truy vấn trạng thái thực tế,
+   không tự kết luận thao tác dừng thành công.
+ end note
+@enduml

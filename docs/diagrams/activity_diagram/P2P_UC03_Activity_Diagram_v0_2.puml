@@ -1,0 +1,102 @@
+@startuml UC03_Ket_noi_peer
+title Activity Diagram — UC-03: Kết nối peer
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #E2E8F0
+  DiamondBorderColor #475569
+  StartColor #16A34A
+  EndColor #DC2626
+  FontName Arial
+}
+
+|Người dùng|
+start
+:Nhập địa chỉ IP hoặc hostname và cổng của peer đích;
+:Nhấn Connect;
+
+|React UI|
+if (Địa chỉ không rỗng và cổng là số hợp lệ?) then (Có)
+  :Gửi yêu cầu kết nối qua API preload / IPC;
+else (Không)
+  :Hiển thị lỗi địa chỉ hoặc cổng không hợp lệ;
+  stop
+endif
+
+|Electron Main / Bridge|
+if (Java backend sẵn sàng?) then (Có)
+  :Tạo requestId;
+  :Gửi command peer.connect qua JSON Lines;
+
+  |Java P2P Core|
+  if (Peer cục bộ đang RUNNING?) then (Có)
+    if (Địa chỉ và cổng đích hợp lệ?) then (Có)
+      :Kiểm tra đã có kết nối tương đương đến peer này;
+      note right
+        Java xác thực lại dữ liệu từ giao diện (NFR-13).
+        Còn mở: có chặn kết nối tới chính peer cục bộ hay không.
+      end note
+      if (Đã có kết nối tương đương?) then (Có)
+        :Không tạo bản ghi trùng;
+        :Trả response peer đã kết nối;
+      else (Chưa)
+        :Mở TCP socket đến peer đích với thời hạn hữu hạn;
+        note right
+          NFR-05: mục tiêu không quá 5 giây.
+        end note
+        if (Kết nối TCP thành công trong thời hạn?) then (Có)
+          :Gửi thông điệp handshake;
+
+          |Peer từ xa|
+          :Nhận và kiểm tra handshake theo UC-12;
+          :Gửi phản hồi chấp nhận hoặc từ chối;
+
+          |Java P2P Core|
+          if (Phản hồi handshake hợp lệ và được chấp nhận trong thời hạn?) then (Có)
+            :Thêm peer vào danh sách quản lý với trạng thái CONNECTED;
+            :Ghi log và phát sự kiện trạng thái CONNECTED;
+            :Trả response thành công;
+          else (Không)
+            :Đóng socket;
+            :Trả response lỗi handshake hoặc thông điệp không hợp lệ;
+          endif
+        else (Không)
+          :Đóng và dọn dẹp socket nếu đã tạo;
+          :Trả response lỗi kết nối hoặc quá thời hạn;
+        endif
+      endif
+    else (Không)
+      :Trả response lỗi địa chỉ hoặc cổng không hợp lệ;
+    endif
+  else (Không)
+    :Trả response lỗi peer cục bộ chưa RUNNING;
+  endif
+
+  |Electron Main / Bridge|
+  if (Nhận response trong thời hạn?) then (Có)
+    :Đối chiếu response theo requestId;
+  else (Không)
+    :Đánh dấu kết quả chưa xác định;
+    :Truy vấn danh sách peer từ Java, không gửi lại lệnh kết nối;
+    note right
+      Gửi lại lệnh một cách mù quáng có thể tạo kết nối trùng.
+    end note
+  endif
+else (Không)
+  :Tạo kết quả lỗi backend không khả dụng;
+endif
+
+|React UI|
+:Nhận kết quả hoặc danh sách peer đã đồng bộ;
+if (Java xác nhận peer đang CONNECTED?) then (Có)
+  :Cập nhật danh sách peer;
+  :Hiển thị kết nối thành công;
+else (Không / chưa xác minh)
+  :Hiển thị lỗi theo kết quả hoặc trạng thái chưa xác minh;
+  :Không tự thêm peer vào danh sách;
+endif
+
+stop
+@enduml

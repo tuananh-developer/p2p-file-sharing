@@ -1,0 +1,58 @@
+@startuml P2P_File_Sharing_Use_Case_Diagram_v0.2
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam actorStyle awesome
+
+actor "Người dùng cục bộ" as User
+actor "Peer từ xa\n(instance khác)" as RemotePeer
+
+rectangle "P2P File Sharing Desktop Application\n(một instance ứng dụng)" {
+  usecase "UC-01\nKhởi chạy peer" as UC01
+  usecase "UC-02\nDừng peer" as UC02
+  usecase "UC-03\nKết nối peer" as UC03
+  usecase "UC-04\nNgắt kết nối peer" as UC04
+  usecase "UC-05\nChọn thư mục chia sẻ" as UC05
+  usecase "UC-06\nXem/tìm kiếm tập tin" as UC06
+  usecase "UC-06a\nLấy danh sách tập tin\ntừ peer" as UC06a
+  usecase "UC-07\nTải tập tin" as UC07
+  usecase "UC-07a\nKiểm tra tính toàn vẹn" as UC07a
+  usecase "UC-08\nCung cấp tập tin\ncho peer" as UC08
+  usecase "UC-09\nTheo dõi nhật ký\nhoạt động" as UC09
+  usecase "UC-10\nTiếp tục tải tập tin\nbị gián đoạn" as UC10
+  usecase "UC-11\nTải tập tin\ntừ nhiều peer" as UC11
+  usecase "UC-12\nChấp nhận kết nối đến" as UC12
+}
+
+User -- UC01
+User -- UC02
+User -- UC03
+User -- UC04
+User -- UC05
+User -- UC06
+User -- UC07
+User -- UC09
+User -- UC10
+User -- UC11
+
+RemotePeer -- UC03
+RemotePeer -- UC04
+RemotePeer -- UC06a
+RemotePeer -- UC07
+RemotePeer -- UC08
+RemotePeer -- UC10
+RemotePeer -- UC11
+RemotePeer -- UC12
+
+UC06 ..> UC06a : <<include>>
+UC07 ..> UC07a : <<include>>
+UC10 ..> UC07 : <<extend>>
+UC11 ..> UC07 : <<extend>>
+
+note bottom of UC10
+  Nâng cao; ngoài MVP
+end note
+note bottom of UC11
+  Nâng cao; ngoài MVP
+end note
+@enduml
