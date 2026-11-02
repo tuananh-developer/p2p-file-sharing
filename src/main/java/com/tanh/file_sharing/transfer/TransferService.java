@@ -916,7 +916,9 @@ public final class TransferService implements AutoCloseable {
             task.status = next;
             task.detail = detail;
             publishStatus(task, detail);
-            if (next == TransferStatus.COMPLETED) {
+            if (next == TransferStatus.TRANSFERRING) {
+                publishActivity("Download started: " + task.targetFileName, "INFO");
+            } else if (next == TransferStatus.COMPLETED) {
                 publishActivity("Download completed: " + task.targetFileName, "INFO");
             } else if (next == TransferStatus.PAUSED) {
                 publishActivity("Download paused: " + task.targetFileName, "WARN");
