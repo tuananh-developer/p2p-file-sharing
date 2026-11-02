@@ -765,6 +765,7 @@ public final class TransferService implements AutoCloseable {
             task.status = TransferStatus.COMPLETED;
             task.detail = "Download completed and SHA-256 verified.";
             publishStatus(task, task.detail);
+            publishActivity("Download completed: " + task.targetFileName, "INFO");
         }
     }
 
