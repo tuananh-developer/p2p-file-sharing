@@ -12,9 +12,11 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -46,8 +48,16 @@ class TransferResumeIntegrationTest {
         manifest.chunkHashes().set(0, sha256(Arrays.copyOf(content, RANGE_BYTES)));
         ResumeManifestStore.save(manifestPath, manifest);
 
+        List<Map<String, Object>> activityEvents = new ArrayList<>();
+        EventPublisher receiverEvents = (eventName, data) -> {
+            if ("activityLogged".equals(eventName)) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> event = (Map<String, Object>) data;
+                activityEvents.add(event);
+            }
+        };
         PeerService source = new PeerService(new ObjectMapper(), EventPublisher.noop());
-        PeerService restartedReceiver = new PeerService(new ObjectMapper(), EventPublisher.noop());
+        PeerService restartedReceiver = new PeerService(new ObjectMapper(), receiverEvents);
         try {
             int sourcePort = availablePort();
             int receiverPort = distinctPort(sourcePort);
@@ -73,6 +83,11 @@ class TransferResumeIntegrationTest {
                     .findFirst().orElseThrow();
             assertEquals(TransferStatus.COMPLETED, completed.status(), completed.detail());
             assertEquals(2, completed.completedChunks());
+            assertTrue(activityEvents.stream().anyMatch(event ->
+                    "TRANSFER".equals(event.get("category"))
+                            && "INFO".equals(event.get("level"))
+                            && "Download completed: archive.bin".equals(event.get("message"))),
+                    "A completed download must publish an activity event.");
             assertArrayEquals(content, Files.readAllBytes(destination.resolve("archive.bin")));
             assertFalse(Files.exists(part));
             assertFalse(Files.exists(manifestPath));
