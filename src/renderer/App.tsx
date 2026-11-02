@@ -16,6 +16,7 @@ interface ActivityItem {
   id: string;
   message: string;
   level: string;
+  category: string;
   time: string;
 }
 
@@ -38,16 +39,24 @@ function App() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; message: string } | null>(null);
 
-  const addActivity = useCallback((message: string, level = "INFO") => {
-    setActivities((current) => [
-      {
-        id: crypto.randomUUID(),
+  const addActivity = useCallback((message: string, level = "INFO", timestamp?: string, id?: string, category = "APPLICATION") => {
+    const parsedTime = timestamp ? new Date(timestamp) : new Date();
+    const time = Number.isNaN(parsedTime.getTime())
+      ? new Date().toLocaleTimeString()
+      : parsedTime.toLocaleTimeString();
+    setActivities((current) => {
+      const entryId = id && id.length > 0 ? id : crypto.randomUUID();
+      if (current.some((item) => item.id === entryId)) {
+        return current;
+      }
+      return [{
+        id: entryId,
         message,
         level,
-        time: new Date().toLocaleTimeString()
-      },
-      ...current
-    ].slice(0, 30));
+        category,
+        time
+      }, ...current].slice(0, 100);
+    });
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -117,6 +126,7 @@ function App() {
           setDirectory(null);
           setLocalFiles([]);
           setTransfers([]);
+          addActivity("Java backend process failed.", "ERROR");
           break;
         case "backendStatusChanged":
           if (data.status === "READY") {
@@ -148,7 +158,10 @@ function App() {
         case "activityLogged":
           addActivity(
             typeof data.message === "string" ? data.message : "Activity event received.",
-            typeof data.level === "string" ? data.level : "INFO"
+            typeof data.level === "string" ? data.level : "INFO",
+            typeof data.timestamp === "string" ? data.timestamp : undefined,
+            typeof data.id === "string" ? data.id : undefined,
+            typeof data.category === "string" ? data.category : "APPLICATION"
           );
           break;
         case "backendProcessExited":
@@ -159,6 +172,7 @@ function App() {
             setDirectory(null);
             setLocalFiles([]);
             setTransfers([]);
+            addActivity("Java backend exited unexpectedly.", "ERROR");
           }
           break;
         default:
@@ -209,7 +223,6 @@ function App() {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
       setNotice({ kind: "success", message: "Peer is listening on " + snapshot.bindAddress + ":" + snapshot.port + "." });
-      addActivity("Peer started on " + snapshot.bindAddress + ":" + snapshot.port + ".");
     });
   };
 
@@ -219,7 +232,6 @@ function App() {
       setPeer(snapshot);
       setPeers([]);
       setNotice({ kind: "success", message: "Local peer stopped." });
-      addActivity("Local peer stopped.");
     });
   };
 
@@ -234,7 +246,6 @@ function App() {
       const connected = await window.p2p.peer.connect({ host: remoteHost.trim(), port });
       setPeers(await window.p2p.peer.list());
       setNotice({ kind: "success", message: "Connected to " + connected.host + ":" + connected.port + "." });
-      addActivity("Connected to peer " + connected.peerId + ".");
     });
   };
 
@@ -243,7 +254,6 @@ function App() {
       await window.p2p.peer.disconnect(peerId);
       setPeers(await window.p2p.peer.list());
       setNotice({ kind: "success", message: "Peer disconnected." });
-      addActivity("Disconnected peer " + peerId + ".");
     });
   };
 
@@ -256,7 +266,6 @@ function App() {
       setDirectory(result);
       setLocalFiles(await window.p2p.share.listLocalFiles());
       setNotice({ kind: "success", message: "Shared directory updated." });
-      addActivity("Shared directory changed.");
     });
   };
 
@@ -293,8 +302,6 @@ function App() {
         message: "Download queued as " + accepted.targetFileName +
           (sourcePeerIds.length > 1 ? " using " + sourcePeerIds.length + " candidate peer(s)." : ".")
       });
-      addActivity((sourcePeerIds.length > 1 ? "Multi-source" : "Single-source") +
-        " download queued: " + file.fileName + ".");
     });
   };
 
@@ -332,7 +339,6 @@ function App() {
       await window.p2p.transfer.resume(taskId, connectedPeers.map((item) => item.peerId));
       setTransfers(await window.p2p.transfer.list());
       setResumableDownloads((current) => current.filter((item) => item.taskId !== taskId));
-      addActivity("Resumed interrupted download " + taskId + ".");
       setNotice({ kind: "success", message: "Resume queued. Sources will be checked against the saved SHA-256." });
     });
   };
@@ -686,7 +692,7 @@ function App() {
                 <span className="eyebrow">SYSTEM EVENTS</span>
                 <h2>Recent activity</h2>
               </div>
-              <button className="button button-quiet button-small" onClick={() => setActivities([])}>Clear</button>
+              <button className="button button-quiet button-small" onClick={() => setActivities([])}>Clear visible</button>
             </div>
             {activities.length === 0 ? (
               <div className="empty-state compact">Connection, transfer and backend events will be recorded here.</div>
@@ -695,7 +701,7 @@ function App() {
                 {activities.map((activity) => (
                   <div className="activity-row" key={activity.id}>
                     <span className={"activity-dot level-" + activity.level.toLowerCase()} />
-                    <span className="activity-message">{activity.message}</span>
+                    <span className="activity-message"><span className="activity-category">{activity.category}</span>{activity.message}</span>
                     <time>{activity.time}</time>
                   </div>
                 ))}
@@ -706,7 +712,7 @@ function App() {
       </main>
 
       <footer className="footer">
-        <span>Java 21 · TCP P2P · JSON Lines</span>
+        <span>Java 27 · TCP P2P · JSON Lines</span>
         <span>{connectedPeers.length} active connection(s)</span>
       </footer>
     </div>

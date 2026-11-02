@@ -715,7 +715,9 @@ public final class PeerService implements AutoCloseable {
 
     private void logActivity(String message, String level) {
         events.publish("activityLogged", Map.of(
+                "id", UUID.randomUUID().toString(),
                 "timestamp", java.time.Instant.now().toString(),
+                "category", "PEER",
                 "level", level,
                 "message", message));
     }
