@@ -433,6 +433,7 @@ public final class TransferService implements AutoCloseable {
             task.status = TransferStatus.PAUSED;
             task.detail = detail + " Completed ranges are saved and can be resumed.";
             publishStatus(task, task.detail);
+            publishActivity("Download paused: " + task.targetFileName, "WARN");
         }
     }
 
