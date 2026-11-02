@@ -15,6 +15,7 @@ import com.tanh.file_sharing.model.FileSearchError;
 import com.tanh.file_sharing.model.FileSearchResponse;
 import com.tanh.file_sharing.model.DownloadAccepted;
 import com.tanh.file_sharing.model.TransferSnapshot;
+import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
 import com.tanh.file_sharing.protocol.FramedJsonChannel;
 import com.tanh.file_sharing.protocol.PeerProtocol;
 import com.tanh.file_sharing.protocol.ProtocolException;
@@ -149,6 +150,10 @@ public final class PeerService implements AutoCloseable {
     }
 
     public PeerSnapshot stopPeer() {
+        return stopPeer(true);
+    }
+
+    private PeerSnapshot stopPeer(boolean cancelTransfers) {
         synchronized (lifecycleLock) {
             if (status == PeerStatus.STOPPED) {
                 return snapshot();
@@ -174,8 +179,11 @@ public final class PeerService implements AutoCloseable {
             }
             pendingSockets.clear();
 
-            // D-03: cancel downloads before closing established peer connections.
-            cleanupFailed |= !transferService.cancelAllAndAwait(2_000);
+            // D-03 applies to an explicit peer stop. Application shutdown pauses
+            // transfers first and closes connections without discarding saved ranges.
+            if (cancelTransfers) {
+                cleanupFailed |= !transferService.cancelAllAndAwait(2_000);
+            }
 
             for (PeerConnection connection : List.copyOf(activeConnections.values())) {
                 try {
@@ -469,6 +477,14 @@ public final class PeerService implements AutoCloseable {
         return transferService.listTransfers();
     }
 
+    public List<ResumableDownloadSnapshot> listResumableDownloads(String destinationDirectory) {
+        return transferService.listResumableDownloads(destinationDirectory);
+    }
+
+    public DownloadAccepted resumeDownload(UUID taskId, List<UUID> peerIds, String destinationDirectory) {
+        return transferService.resume(taskId, peerIds, destinationDirectory);
+    }
+
     public PeerStatus getStatus() {
         return status;
     }
@@ -476,12 +492,20 @@ public final class PeerService implements AutoCloseable {
     @Override
     public void close() {
         try {
+            // Application shutdown pauses transfers after their completed ranges
+            // have been persisted; an explicit peer.stop still cancels them.
+            if (!transferService.pauseAllAndAwait(10_000)) {
+                LOGGER.warning("Some downloads were still pausing; closing peer sockets to interrupt active ranges.");
+            }
             if (status == PeerStatus.RUNNING || status == PeerStatus.STOPPING) {
                 try {
-                    stopPeer();
+                    stopPeer(false);
                 } catch (PeerException exception) {
                     LOGGER.log(Level.WARNING, "Peer did not stop cleanly during application shutdown.", exception);
                 }
+            }
+            if (!transferService.pauseAllAndAwait(5_000)) {
+                LOGGER.warning("Some downloads did not finish pausing after peer sockets were closed.");
             }
         } finally {
             transferService.close();

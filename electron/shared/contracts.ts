@@ -61,7 +61,18 @@ export type TransferStatus =
   | "VERIFYING"
   | "COMPLETED"
   | "FAILED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "PAUSED";
+
+export interface ResumableDownloadSnapshot {
+  taskId: string;
+  fileName: string;
+  targetFileName: string;
+  totalBytes: number;
+  receivedBytes: number;
+  totalChunks: number;
+  completedChunks: number;
+}
 
 export interface TransferSnapshot {
   taskId: string;
@@ -109,6 +120,8 @@ export interface P2PBridgeApi {
     downloadMulti(peerIds: string[], fileName: string): Promise<DownloadAccepted | null>;
     cancel(taskId: string): Promise<TransferSnapshot>;
     list(): Promise<TransferSnapshot[]>;
+    listResumable(): Promise<ResumableDownloadSnapshot[] | null>;
+    resume(taskId: string, peerIds: string[]): Promise<DownloadAccepted>;
   };
   onEvent(listener: (event: BackendEvent) => void): () => void;
 }

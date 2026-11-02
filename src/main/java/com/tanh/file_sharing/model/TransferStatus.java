@@ -8,9 +8,10 @@ public enum TransferStatus {
     VERIFYING,
     COMPLETED,
     FAILED,
-    CANCELLED;
+    CANCELLED,
+    PAUSED;
 
     public boolean isTerminal() {
-        return this == COMPLETED || this == FAILED || this == CANCELLED;
+        return this == COMPLETED || this == FAILED || this == CANCELLED || this == PAUSED;
     }
 }

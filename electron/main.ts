@@ -18,6 +18,7 @@ let mainWindow: BrowserWindow | null = null;
 let backendStatus: BackendStatusSnapshot = { status: "STARTING" };
 let backendStart: Promise<BackendStatusSnapshot> | null = null;
 let isQuitting = false;
+let resumableDirectory: string | null = null;
 
 function publishEvent(event: BackendEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -81,7 +82,7 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
     setBackendStatus({ status: "STARTING" });
     try {
       if (bridge.getState() !== "STOPPED") {
-        await bridge.shutdown(1_000);
+        await bridge.shutdown(25_000);
       }
 
       const libDirectory = process.env.P2P_BACKEND_LIB_DIR
@@ -338,6 +339,45 @@ function registerIpcHandlers(): void {
     const data = await command<{ transfers: unknown[] }>("transfer.list");
     return data.transfers;
   });
+
+  ipcMain.handle("transfer:list-resumable", async () => {
+    requireBackendReady();
+    const options: OpenDialogOptions = {
+      title: "Choose the previous download folder",
+      properties: ["openDirectory"]
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    const selectedPath = result.filePaths.at(0);
+    if (result.canceled || !selectedPath) {
+      resumableDirectory = null;
+      return null;
+    }
+    resumableDirectory = selectedPath;
+    const data = await command<{ downloads: unknown[] }>("transfer.listResumable", {
+      destinationDir: selectedPath
+    });
+    return data.downloads;
+  });
+
+  ipcMain.handle("transfer:resume", async (_event, input: { taskId?: unknown; peerIds?: unknown }) => {
+    requireBackendReady();
+    if (!resumableDirectory) {
+      throw new Error("Find interrupted downloads and select their folder first.");
+    }
+    if (!Array.isArray(input?.peerIds) || input.peerIds.length < 1 || input.peerIds.length > 16) {
+      throw new Error("peerIds must contain between 1 and 16 peer IDs.");
+    }
+    const peerIds = [...new Set(input.peerIds.map((value) => requireUuid(value, "peerId")))];
+    const taskId = requireUuid(input?.taskId, "taskId");
+    const data = await command<{ download: unknown }>("transfer.resume", {
+      taskId,
+      peerIds,
+      destinationDir: resumableDirectory
+    });
+    return data.download;
+  });
 }
 
 function installContentSecurityPolicy(): void {
@@ -430,7 +470,7 @@ app.on("before-quit", (event) => {
   }
   event.preventDefault();
   isQuitting = true;
-  void bridge.shutdown(3_000).finally(() => app.exit(0));
+  void bridge.shutdown(25_000).finally(() => app.exit(0));
 });
 
 process.on("SIGINT", () => app.quit());

@@ -27,7 +27,9 @@ const api: P2PBridgeApi = {
     download: (peerId, fileName) => ipcRenderer.invoke("transfer:download", { peerId, fileName }),
     downloadMulti: (peerIds, fileName) => ipcRenderer.invoke("transfer:download-multi", { peerIds, fileName }),
     cancel: (taskId) => ipcRenderer.invoke("transfer:cancel", taskId),
-    list: () => ipcRenderer.invoke("transfer:list")
+    list: () => ipcRenderer.invoke("transfer:list"),
+    listResumable: () => ipcRenderer.invoke("transfer:list-resumable"),
+    resume: (taskId, peerIds) => ipcRenderer.invoke("transfer:resume", { taskId, peerIds })
   },
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: BackendEvent) => listener(payload);

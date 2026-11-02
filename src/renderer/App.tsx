@@ -8,7 +8,8 @@ import type {
   RemotePeerSnapshot,
   SharedDirectorySnapshot,
   SharedFileSnapshot,
-  TransferSnapshot
+  TransferSnapshot,
+  ResumableDownloadSnapshot
 } from "../../electron/shared/contracts";
 
 interface ActivityItem {
@@ -28,6 +29,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<RemoteFileSearchResult[]>([]);
   const [searchErrors, setSearchErrors] = useState<FileSearchResponse["errors"]>([]);
   const [transfers, setTransfers] = useState<TransferSnapshot[]>([]);
+  const [resumableDownloads, setResumableDownloads] = useState<ResumableDownloadSnapshot[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [bindAddress, setBindAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("5001");
@@ -307,6 +309,34 @@ function App() {
     });
   };
 
+  const handleFindResumable = () => {
+    void runAction("transfer-resumable", async () => {
+      const found = await window.p2p.transfer.listResumable();
+      setResumableDownloads(found ?? []);
+      addActivity("Scanned the selected folder for interrupted downloads.");
+      setNotice({
+        kind: "info",
+        message: found === null ? "Folder selection cancelled."
+          : found.length === 0 ? "No valid interrupted downloads were found."
+            : "Found " + found.length + " interrupted download(s)."
+      });
+    });
+  };
+
+  const handleResumeTransfer = (taskId: string) => {
+    if (connectedPeers.length === 0) {
+      setNotice({ kind: "error", message: "Connect to at least one source peer before resuming." });
+      return;
+    }
+    void runAction("resume-" + taskId, async () => {
+      await window.p2p.transfer.resume(taskId, connectedPeers.map((item) => item.peerId));
+      setTransfers(await window.p2p.transfer.list());
+      setResumableDownloads((current) => current.filter((item) => item.taskId !== taskId));
+      addActivity("Resumed interrupted download " + taskId + ".");
+      setNotice({ kind: "success", message: "Resume queued. Sources will be checked against the saved SHA-256." });
+    });
+  };
+
   const handleCancelTransfer = (taskId: string) => {
     void runAction("cancel-" + taskId, async () => {
       await window.p2p.transfer.cancel(taskId);
@@ -565,9 +595,14 @@ function App() {
                 <span className="eyebrow">TRANSFER QUEUE</span>
                 <h2>Downloads</h2>
               </div>
-              <button className="button button-quiet button-small" onClick={() => void runAction("transfer-refresh", async () => setTransfers(await window.p2p.transfer.list()))} disabled={backend.status !== "READY"}>
-                Refresh
-              </button>
+              <div className="form-actions">
+                <button className="button button-quiet button-small" onClick={handleFindResumable} disabled={backend.status !== "READY" || busy["transfer-resumable"]}>
+                  Find interrupted
+                </button>
+                <button className="button button-quiet button-small" onClick={() => void runAction("transfer-refresh", async () => setTransfers(await window.p2p.transfer.list()))} disabled={backend.status !== "READY"}>
+                  Refresh
+                </button>
+              </div>
             </div>
             {transfers.length === 0 ? (
               <div className="empty-state compact">Download tasks and their progress will appear here.</div>
@@ -577,7 +612,7 @@ function App() {
                   const percent = transfer.totalBytes > 0
                     ? Math.min(100, transfer.receivedBytes / transfer.totalBytes * 100)
                     : transfer.status === "COMPLETED" ? 100 : 0;
-                  const terminal = ["COMPLETED", "FAILED", "CANCELLED"].includes(transfer.status);
+                  const terminal = ["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(transfer.status);
                   return (
                     <div className="transfer-row" key={transfer.taskId}>
                       <div className="transfer-topline">
@@ -606,6 +641,37 @@ function App() {
                             Cancel
                           </button>
                         )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {resumableDownloads.length > 0 && (
+              <div className="transfer-list resumable-list">
+                <div className="eyebrow">INTERRUPTED DOWNLOADS</div>
+                {resumableDownloads.map((item) => {
+                  const percent = item.totalBytes > 0
+                    ? Math.min(100, item.receivedBytes / item.totalBytes * 100)
+                    : 0;
+                  return (
+                    <div className="transfer-row" key={item.taskId}>
+                      <div className="transfer-topline">
+                        <div>
+                          <strong>{item.targetFileName}</strong>
+                          <span>{item.completedChunks}/{item.totalChunks} verified ranges saved</span>
+                        </div>
+                        <span className="state-chip state-idle">PAUSED</span>
+                      </div>
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} />
+                      </div>
+                      <div className="transfer-bottomline">
+                        <span>{formatBytes(item.receivedBytes)} / {formatBytes(item.totalBytes)} · {percent.toFixed(1)}%</span>
+                        <button className="text-button" onClick={() => handleResumeTransfer(item.taskId)}
+                          disabled={connectedPeers.length === 0 || busy["resume-" + item.taskId]}>
+                          Resume
+                        </button>
                       </div>
                     </div>
                   );
