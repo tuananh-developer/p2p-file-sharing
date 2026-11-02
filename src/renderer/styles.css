@@ -134,6 +134,7 @@ td { padding: 11px 8px; border-bottom: 1px solid rgba(42, 54, 80, 0.65); color: 
 .activity-dot.level-error { background: #ee7d91; }
 .activity-dot.level-warn, .activity-dot.level-warning { background: #e8b45c; }
 .activity-message { flex: 1; color: #aab8cf; font-size: 10px; }
+.activity-category { margin-right: 8px; color: #7185a7; font-size: 8px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .activity-row time { color: #667895; font-size: 9px; white-space: nowrap; }
 .empty-state { padding: 24px 12px; text-align: center; color: #71819e; font-size: 11px; line-height: 1.6; }
 .empty-state.compact { padding: 18px 8px 8px; }

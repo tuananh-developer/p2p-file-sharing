@@ -147,6 +147,7 @@ public final class TransferService implements AutoCloseable {
         DownloadTask task = new DownloadTask(UUID.randomUUID(), availablePeers, fileName, reserved, multiSource);
         tasks.put(task.taskId, task);
         publishStatus(task, multiSource ? "Multi-source download queued." : "Download queued.");
+        publishActivity("Download queued: " + task.targetFileName, "INFO");
 
         try {
             Future<?> future = executor.submit(() -> runDownload(task));
@@ -266,6 +267,7 @@ public final class TransferService implements AutoCloseable {
         task.detail = "Resume queued; revalidating source metadata.";
         tasks.put(taskId, task);
         publishStatus(task, task.detail);
+        publishActivity("Resuming download: " + task.targetFileName, "INFO");
         try {
             task.future = executor.submit(() -> runDownload(task));
         } catch (RuntimeException exception) {
@@ -293,6 +295,7 @@ public final class TransferService implements AutoCloseable {
                 worker.interrupt();
             }
             publishStatus(task, task.detail);
+            publishActivity("Download cancelled: " + task.targetFileName, "WARN");
         }
         return task.snapshot();
     }
@@ -319,6 +322,7 @@ public final class TransferService implements AutoCloseable {
                         task.worker.interrupt();
                     }
                     publishStatus(task, task.detail);
+                    publishActivity("Download cancelled because the local peer is stopping: " + task.targetFileName, "WARN");
                 }
             }
         }
@@ -429,6 +433,7 @@ public final class TransferService implements AutoCloseable {
             task.status = TransferStatus.PAUSED;
             task.detail = detail + " Completed ranges are saved and can be resumed.";
             publishStatus(task, task.detail);
+            publishActivity("Download paused: " + task.targetFileName, "WARN");
         }
     }
 
@@ -911,6 +916,13 @@ public final class TransferService implements AutoCloseable {
             task.status = next;
             task.detail = detail;
             publishStatus(task, detail);
+            if (next == TransferStatus.TRANSFERRING) {
+                publishActivity("Download started: " + task.targetFileName, "INFO");
+            } else if (next == TransferStatus.COMPLETED) {
+                publishActivity("Download completed: " + task.targetFileName, "INFO");
+            } else if (next == TransferStatus.PAUSED) {
+                publishActivity("Download paused: " + task.targetFileName, "WARN");
+            }
         }
     }
 
@@ -922,6 +934,7 @@ public final class TransferService implements AutoCloseable {
             task.status = TransferStatus.CANCELLED;
             task.detail = detail;
             publishStatus(task, detail);
+            publishActivity("Download cancelled: " + task.targetFileName, "WARN");
         }
     }
 
@@ -933,7 +946,17 @@ public final class TransferService implements AutoCloseable {
             task.status = TransferStatus.FAILED;
             task.detail = detail;
             publishStatus(task, detail);
+            publishActivity("Download failed: " + task.targetFileName, "ERROR");
         }
+    }
+
+    private void publishActivity(String message, String level) {
+        events.publish("activityLogged", Map.of(
+                "id", UUID.randomUUID().toString(),
+                "timestamp", java.time.Instant.now().toString(),
+                "category", "TRANSFER",
+                "level", level,
+                "message", message));
     }
 
     private void publishStatus(DownloadTask task, String detail) {
