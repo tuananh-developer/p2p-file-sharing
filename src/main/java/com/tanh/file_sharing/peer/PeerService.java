@@ -76,7 +76,7 @@ public final class PeerService implements AutoCloseable {
     private final TransferService transferService;
 
     private volatile PeerStatus status = PeerStatus.STOPPED;
-    private volatile String bindAddress = "127.0.0.1";
+    private volatile String bindAddress = NetworkAddressResolver.AUTO_BIND_ADDRESS;
     private volatile int listeningPort;
     private volatile SSLServerSocket serverSocket;
     private volatile ExecutorService acceptExecutor;
@@ -836,7 +836,7 @@ public final class PeerService implements AutoCloseable {
     private void resetAfterStartFailure() {
         serverSocket = null;
         listeningPort = 0;
-        bindAddress = "127.0.0.1";
+        bindAddress = NetworkAddressResolver.AUTO_BIND_ADDRESS;
         transition(PeerStatus.STOPPED);
     }
 
