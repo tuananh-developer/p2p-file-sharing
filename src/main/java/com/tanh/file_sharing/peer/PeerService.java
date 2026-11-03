@@ -95,8 +95,9 @@ public final class PeerService implements AutoCloseable {
             if (status == PeerStatus.STARTING || status == PeerStatus.STOPPING) {
                 throw new PeerException("PEER_BUSY", "Peer is currently " + status + ".");
             }
-            if (port < 1 || port > 65535) {
-                throw new PeerException("INVALID_PORT", "Port must be between 1 and 65535.");
+            if (port < 0 || port > 65535) {
+                throw new PeerException("INVALID_PORT",
+                        "Port must be between 0 and 65535; use 0 for automatic allocation.");
             }
 
             String addressText = requestedBindAddress == null || requestedBindAddress.isBlank()
@@ -107,6 +108,7 @@ public final class PeerService implements AutoCloseable {
                 InetAddress address = InetAddress.getByName(addressText);
                 candidate = new ServerSocket();
                 candidate.setReuseAddress(true);
+                // Port 0 asks the operating system to allocate an available ephemeral port.
                 candidate.bind(new InetSocketAddress(address, port), ACCEPT_BACKLOG);
 
                 serverSocket = candidate;
