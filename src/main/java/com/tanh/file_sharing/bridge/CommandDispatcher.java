@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.tanh.file_sharing.peer.PeerException;
 import com.tanh.file_sharing.peer.PeerService;
+import com.tanh.file_sharing.peer.NetworkAddressResolver;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +28,7 @@ public final class CommandDispatcher {
 
         return switch (normalize(command)) {
             case "peer.start" -> Map.of("peer", peerService.startPeer(
-                    optionalText(body, "bindAddress", "127.0.0.1"), requiredInt(body, "port")));
+                    optionalText(body, "bindAddress", NetworkAddressResolver.AUTO_BIND_ADDRESS), requiredInt(body, "port")));
             case "peer.stop" -> Map.of("peer", peerService.stopPeer());
             case "peer.connect" -> Map.of("peer",
                     peerService.connectPeer(requiredText(body, "host"), requiredInt(body, "port")));
@@ -35,6 +36,11 @@ public final class CommandDispatcher {
                     peerService.disconnectPeer(requiredUuid(body, "peerId")));
             case "peer.status" -> Map.of("peer", peerService.getPeerStatus());
             case "peer.list" -> Map.of("peers", peerService.listPeers());
+            case "security.status" -> Map.of("security", peerService.getSecuritySnapshot());
+            case "security.trust" -> Map.of("security",
+                    peerService.trustPeerFingerprint(requiredText(body, "fingerprint")));
+            case "security.untrust" -> Map.of("security",
+                    peerService.removeTrustedPeerFingerprint(requiredText(body, "fingerprint")));
             case "share.setDirectory" -> Map.of("sharedDirectory",
                     peerService.setSharedDirectory(requiredText(body, "path")));
             case "share.getDirectory" -> Map.of("sharedDirectory", peerService.getSharedDirectory());
