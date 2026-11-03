@@ -190,7 +190,10 @@ Supported commands:
 
 | Command | Payload | Result |
 |---|---|---|
-| `peer.start` | `bindAddress`, `port` | `peer` snapshot |
+| `peer.start` | optional `bindAddress` (default `0.0.0.0`), `port` (`0` asks the OS to allocate a free port) | `peer` snapshot, including the assigned port and local IPv4 addresses |
+| `security.status` | `{}` | TLS protocol, local SHA-256 identity fingerprint, and trusted fingerprints |
+| `security.trust` | `fingerprint` | Adds a verified peer certificate fingerprint |
+| `security.untrust` | `fingerprint` | Revokes a trusted peer fingerprint for future TLS handshakes |
 | `peer.stop` | `{}` | `peer` snapshot |
 | `peer.connect` | `host`, `port` | connected peer snapshot |
 | `peer.disconnect` | `peerId` | disconnected peer snapshot |
@@ -213,8 +216,21 @@ Events currently emitted are `backendStatusChanged`, `peerStatusChanged`, `conne
 
 ## 9. MVP error codes
 
-`INVALID_PORT`, `INVALID_ADDRESS`, `PORT_IN_USE`, `PERMISSION_DENIED`, `PEER_BUSY`, `PEER_NOT_RUNNING`, `CONNECT_TIMEOUT`, `CONNECTION_REFUSED`, `HANDSHAKE_FAILED`, `UNKNOWN_PEER`, `CLEANUP_FAILED`, `INVALID_ARGUMENT`, `UNKNOWN_COMMAND`, `INVALID_JSON`, `NOT_SHARING`, `INVALID_DIRECTORY`, `SHARED_DIRECTORY_UNAVAILABLE`, `PEER_NOT_CONNECTED`, `PEER_REQUEST_TIMEOUT`, `PEER_REQUEST_INTERRUPTED`, `PEER_IO_ERROR`, `INVALID_PEER_RESPONSE`, `UNKNOWN_OPERATION`, `UNSUPPORTED_PROTOCOL_VERSION`, `RESPONSE_TOO_LARGE`, `FILE_UNAVAILABLE`, `FILE_CHANGED`, `INVALID_FILE_NAME`, `INVALID_DESTINATION`, `TRANSFER_LIMIT_REACHED`, `TRANSFER_QUEUE_FAILED`, `TRANSFER_CANCELLED`, `TRANSFER_TIMEOUT`, `TRANSFER_FAILED`, `TRANSFER_SIZE_MISMATCH`, `INTEGRITY_CHECK_FAILED`, `SOURCE_MISMATCH`, `RANGE_UNAVAILABLE`, `FILE_IO_ERROR`, `TASK_ALREADY_FINISHED`, `UNKNOWN_TASK`, and `INTERNAL_ERROR`.
+`INVALID_PORT`, `INVALID_ADDRESS`, `PORT_IN_USE`, `PERMISSION_DENIED`, `PEER_BUSY`, `PEER_NOT_RUNNING`, `CONNECT_TIMEOUT`, `CONNECTION_REFUSED`, `HANDSHAKE_FAILED`, `PEER_AUTHENTICATION_FAILED`, `INVALID_PEER_FINGERPRINT`, `UNKNOWN_PEER`, `CLEANUP_FAILED`, `INVALID_ARGUMENT`, `UNKNOWN_COMMAND`, `INVALID_JSON`, `NOT_SHARING`, `INVALID_DIRECTORY`, `SHARED_DIRECTORY_UNAVAILABLE`, `PEER_NOT_CONNECTED`, `PEER_REQUEST_TIMEOUT`, `PEER_REQUEST_INTERRUPTED`, `PEER_IO_ERROR`, `INVALID_PEER_RESPONSE`, `UNKNOWN_OPERATION`, `UNSUPPORTED_PROTOCOL_VERSION`, `RESPONSE_TOO_LARGE`, `FILE_UNAVAILABLE`, `FILE_CHANGED`, `INVALID_FILE_NAME`, `INVALID_DESTINATION`, `TRANSFER_LIMIT_REACHED`, `TRANSFER_QUEUE_FAILED`, `TRANSFER_CANCELLED`, `TRANSFER_TIMEOUT`, `TRANSFER_FAILED`, `TRANSFER_SIZE_MISMATCH`, `INTEGRITY_CHECK_FAILED`, `SOURCE_MISMATCH`, `RANGE_UNAVAILABLE`, `FILE_IO_ERROR`, `TASK_ALREADY_FINISHED`, `UNKNOWN_TASK`, and `INTERNAL_ERROR`.
 
-## 10. Security boundary
+## 10. TCP and TLS security boundary
 
-Protocol v1 has no peer authentication, confidentiality or integrity protection. It is intended for local development and trusted LAN testing only. The default listening address is loopback (`127.0.0.1`). Do not expose this protocol to an untrusted network or the public Internet.
+The operating system performs the TCP three-way handshake (SYN, SYN-ACK, ACK) before the application protocol starts. This establishes a TCP connection only; it does **not** authenticate a peer or encrypt application data.
+
+The P2P application then establishes **TLS 1.3 with mutual certificate authentication** before reading or writing any JSON Lines P2P frame:
+
+1. Each installation creates a persistent RSA-3072 private key and a self-signed X.509 certificate. The private key is stored under `~/.p2p-file-sharing` with owner-only POSIX permissions where supported.
+2. The application computes the certificate's SHA-256 fingerprint. The fingerprint is shown in the desktop Security panel.
+3. Two devices exchange fingerprints through a separate trusted channel and add each other's fingerprint locally. Trust is explicit and bilateral; a missing or mismatched pin rejects the TLS handshake.
+4. After TLS authentication succeeds, the existing protocol-v1 JSON handshake and file-transfer frames run inside the encrypted TLS session. There is no plaintext fallback.
+
+TLS protects confidentiality and integrity in transit and the fingerprint pins authenticate the peer certificates. Revoking a fingerprint prevents subsequent TLS handshakes; it does not retroactively terminate an already established connection, so disconnect an active peer as well when revoking access.
+
+The default listener binds to `0.0.0.0` (all local IPv4 interfaces) and port `0` (OS-assigned ephemeral port). The peer snapshot reports active non-loopback IPv4 addresses and the actual allocated port. A user can bind to a specific local IPv4 address and fixed port instead. Auto mode does not discover remote peers: users still exchange the reachable IP address and allocated port.
+
+Do not trust a fingerprint received solely over the untrusted connection it is meant to authenticate. Share only directories intended for the devices you explicitly trust. TLS does not prevent denial-of-service; use a trusted LAN/VM network and do not expose the peer listener directly to the public Internet.
