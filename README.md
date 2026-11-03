@@ -2,7 +2,7 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core đã có vòng đời peer, file catalog, tải file SHA-256, tải nhiều nguồn theo range và khôi phục download sau khi khởi động lại. Electron/React desktop shell và activity log đã được tích hợp ở mức MVP. Xác thực và mã hóa peer chưa thuộc phạm vi hiện tại.
+> **Trạng thái:** Java Core hỗ trợ vòng đời peer, file catalog, tải file SHA-256, tải nhiều nguồn theo range và khôi phục download sau restart. Kết nối peer được bảo vệ bằng TLS 1.3 mutual authentication và ghim SHA-256 certificate fingerprint. Electron/React desktop shell cung cấp cấu hình mạng và quản lý danh sách peer được tin cậy.
 
 ## Tech stack
 
@@ -208,9 +208,13 @@ Supported commands: `peer.start`, `peer.stop`, `peer.connect`, `peer.disconnect`
 
 See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection framing contract.
 
-## Security note
+## Peer security and network configuration
 
-MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connect may query metadata and download files in the selected shared directory. Default bind address is `127.0.0.1`, which limits the listener to the local machine. Only choose a LAN bind address on a trusted network and share a directory whose contents you are comfortable exposing. Do not expose the listener directly to the public Internet.
+- Peer transport uses **TLS 1.3 with mutual certificate authentication**. Each installation creates and persists an RSA-3072 self-signed identity certificate; its SHA-256 fingerprint is the peer identity pin.
+- A new peer is rejected until **both devices trust each other's fingerprint**. Exchange the fingerprint through a separate trusted channel (in person, a verified call, or another authenticated channel). Do not approve a fingerprint received only over the connection being authenticated.
+- The local listener defaults to **Bind address `0.0.0.0` (Auto)** and **Listening port `0` (Auto)**. The OS allocates a free port, and the app lists active non-loopback IPv4 addresses that other peers can use. Enter a specific local address and/or port to use manual settings.
+- Auto address listens on all local IPv4 interfaces. When using Wi-Fi, VPN, Docker, or a VM bridge, select the address reachable by the other device. The remote IP and the allocated listening port still need to be entered in the Connect to peer form; peer discovery is not automatic.
+- Only share folders whose contents you are comfortable exposing to the devices you explicitly trust. TLS protects confidentiality and integrity in transit and authenticates pinned peers, but does not prevent denial-of-service or make a public listener safe. Prefer a trusted LAN or VM network and do not forward the peer port from your router to the public Internet.
 
 ## Current MVP scope
 
