@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.io.TempDir;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -29,7 +30,7 @@ class PeerServiceTest {
     @Test
     void startsAndStopsAndReleasesListeningPort() throws Exception {
         int port = availablePort();
-        PeerService peer = new PeerService(mapper, EventPublisher.noop());
+        PeerService peer = createPeer();
         try {
             assertEquals(PeerStatus.RUNNING, peer.startPeer("127.0.0.1", port).status());
             assertEquals(PeerStatus.STOPPED, peer.stopPeer().status());
@@ -43,12 +44,13 @@ class PeerServiceTest {
 
     @Test
     void allocatesAnAvailablePortWhenZeroIsRequested() throws Exception {
-        PeerService peer = new PeerService(mapper, EventPublisher.noop());
+        PeerService peer = createPeer();
         try {
             var started = peer.startPeer("127.0.0.1", 0);
 
             assertEquals(PeerStatus.RUNNING, started.status());
             assertTrue(started.port() > 0 && started.port() <= 65535);
+            assertEquals(List.of("127.0.0.1"), started.addresses());
             assertEquals(started.port(), peer.getPeerStatus().port());
 
             peer.stopPeer();
@@ -62,7 +64,7 @@ class PeerServiceTest {
 
     @Test
     void rejectsInvalidPortAndPortAlreadyInUse() throws Exception {
-        PeerService peer = new PeerService(mapper, EventPublisher.noop());
+        PeerService peer = createPeer();
         try {
             PeerException invalid = assertThrows(PeerException.class,
                     () -> peer.startPeer("127.0.0.1", -1));
@@ -72,7 +74,7 @@ class PeerServiceTest {
         }
 
         try (ServerSocket occupied = new ServerSocket(0)) {
-            PeerService another = new PeerService(mapper, EventPublisher.noop());
+            PeerService another = createPeer();
             try {
                 PeerException inUse = assertThrows(PeerException.class,
                         () -> another.startPeer("127.0.0.1", occupied.getLocalPort()));
@@ -85,11 +87,36 @@ class PeerServiceTest {
     }
 
     @Test
+    void rejectsUntrustedPeerUntilBothDevicesApproveEachOthersFingerprint() throws Exception {
+        int firstPort = availablePort();
+        int secondPort = distinctPort(firstPort);
+        PeerService first = createPeer();
+        PeerService second = createPeer();
+        try {
+            first.startPeer("127.0.0.1", firstPort);
+            second.startPeer("127.0.0.1", secondPort);
+
+            PeerException rejected = assertThrows(PeerException.class,
+                    () -> first.connectPeer("127.0.0.1", secondPort));
+            assertEquals("PEER_AUTHENTICATION_FAILED", rejected.getCode());
+
+            trustEachOther(first, second);
+            RemotePeerSnapshot connected = first.connectPeer("127.0.0.1", secondPort);
+            assertEquals(ConnectionStatus.CONNECTED, connected.status());
+            assertEquals("TLSv1.3", first.getSecuritySnapshot().protocol());
+        } finally {
+            first.close();
+            second.close();
+        }
+    }
+
+    @Test
     void twoPeersHandshakeAndDisconnectOnBothSides() throws Exception {
         int firstPort = availablePort();
         int secondPort = distinctPort(firstPort);
-        PeerService first = new PeerService(mapper, EventPublisher.noop());
-        PeerService second = new PeerService(mapper, EventPublisher.noop());
+        PeerService first = createPeer();
+        PeerService second = createPeer();
+        trustEachOther(first, second);
         try {
             first.startPeer("127.0.0.1", firstPort);
             second.startPeer("127.0.0.1", secondPort);
@@ -119,8 +146,9 @@ class PeerServiceTest {
     void simultaneousConnectAttemptsConvergeToOnePeerEntry() throws Exception {
         int firstPort = availablePort();
         int secondPort = distinctPort(firstPort);
-        PeerService first = new PeerService(mapper, EventPublisher.noop());
-        PeerService second = new PeerService(mapper, EventPublisher.noop());
+        PeerService first = createPeer();
+        PeerService second = createPeer();
+        trustEachOther(first, second);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             first.startPeer("127.0.0.1", firstPort);
@@ -154,9 +182,10 @@ class PeerServiceTest {
         Path nested = java.nio.file.Files.createDirectory(shared.resolve("nested"));
         java.nio.file.Files.writeString(nested.resolve("Report-hidden.pdf"), "not listed");
 
-        PeerService owner = new PeerService(mapper, EventPublisher.noop());
-        PeerService consumer = new PeerService(mapper, EventPublisher.noop());
-        PeerService notSharing = new PeerService(mapper, EventPublisher.noop());
+        PeerService owner = createPeer();
+        PeerService consumer = createPeer();
+        PeerService notSharing = createPeer();
+        trustEachOther(owner, consumer, notSharing);
         try {
             var ownerSnapshot = owner.startPeer("127.0.0.1", ownerPort);
             consumer.startPeer("127.0.0.1", consumerPort);
@@ -195,8 +224,9 @@ class PeerServiceTest {
     void supportsConcurrentFileListRequestsInBothDirectionsOnOneConnection() throws Exception {
         int firstPort = availablePort();
         int secondPort = distinctPort(firstPort);
-        PeerService first = new PeerService(mapper, EventPublisher.noop());
-        PeerService second = new PeerService(mapper, EventPublisher.noop());
+        PeerService first = createPeer();
+        PeerService second = createPeer();
+        trustEachOther(first, second);
 
         Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("first-share"));
         Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("second-share"));
@@ -229,8 +259,9 @@ class PeerServiceTest {
     void downloadsMultiChunkFileVerifiesHashAndNeverOverwritesExistingDestination() throws Exception {
         int sourcePort = availablePort();
         int receiverPort = distinctPort(sourcePort);
-        PeerService source = new PeerService(mapper, EventPublisher.noop());
-        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        PeerService source = createPeer();
+        PeerService receiver = createPeer();
+        trustEachOther(source, receiver);
 
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("download-source"));
         Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("download-target"));
@@ -271,8 +302,9 @@ class PeerServiceTest {
     void reportsMissingRemoteFileAndDoesNotLeaveTemporaryFiles() throws Exception {
         int sourcePort = availablePort();
         int receiverPort = distinctPort(sourcePort);
-        PeerService source = new PeerService(mapper, EventPublisher.noop());
-        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        PeerService source = createPeer();
+        PeerService receiver = createPeer();
+        trustEachOther(source, receiver);
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("empty-source"));
         Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("missing-target"));
 
@@ -305,8 +337,9 @@ class PeerServiceTest {
     void canCancelAnActiveDownloadAndRemovesThePartialFile() throws Exception {
         int sourcePort = availablePort();
         int receiverPort = distinctPort(sourcePort);
-        PeerService source = new PeerService(mapper, EventPublisher.noop());
-        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        PeerService source = createPeer();
+        PeerService receiver = createPeer();
+        trustEachOther(source, receiver);
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("cancel-source"));
         Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("cancel-target"));
         byte[] content = new byte[32 * 1024 * 1024];
@@ -341,9 +374,10 @@ class PeerServiceTest {
         int firstPort = availablePort();
         int secondPort = distinctPort(firstPort);
         int receiverPort = distinctPort(secondPort);
-        PeerService firstSource = new PeerService(mapper, EventPublisher.noop());
-        PeerService secondSource = new PeerService(mapper, EventPublisher.noop());
-        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        PeerService firstSource = createPeer();
+        PeerService secondSource = createPeer();
+        PeerService receiver = createPeer();
+        trustEachOther(firstSource, secondSource, receiver);
 
         Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("multi-source-a"));
         Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("multi-source-b"));
@@ -414,9 +448,10 @@ class PeerServiceTest {
         int firstPort = availablePort();
         int secondPort = distinctPort(firstPort);
         int receiverPort = distinctPort(secondPort);
-        PeerService firstSource = new PeerService(mapper, EventPublisher.noop());
-        PeerService secondSource = new PeerService(mapper, EventPublisher.noop());
-        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+        PeerService firstSource = createPeer();
+        PeerService secondSource = createPeer();
+        PeerService receiver = createPeer();
+        trustEachOther(firstSource, secondSource, receiver);
 
         Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("mismatch-source-a"));
         Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("mismatch-source-b"));
@@ -459,8 +494,8 @@ class PeerServiceTest {
     @Test
     void sharedDirectoryConfigurationIsNotPersistedBetweenPeerServiceInstances() throws Exception {
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("session-share"));
-        PeerService firstSession = new PeerService(mapper, EventPublisher.noop());
-        PeerService nextSession = new PeerService(mapper, EventPublisher.noop());
+        PeerService firstSession = createPeer();
+        PeerService nextSession = createPeer();
         try {
             firstSession.setSharedDirectory(shared.toString());
 
@@ -470,6 +505,21 @@ class PeerServiceTest {
         } finally {
             firstSession.close();
             nextSession.close();
+        }
+    }
+
+    private PeerService createPeer() {
+        return new PeerService(mapper, EventPublisher.noop(), UUID.randomUUID(),
+                temporaryDirectory.resolve("peer-security-" + UUID.randomUUID()));
+    }
+
+    private static void trustEachOther(PeerService... peers) {
+        for (int index = 0; index < peers.length; index++) {
+            for (int other = 0; other < peers.length; other++) {
+                if (index != other) {
+                    peers[index].trustPeerFingerprint(peers[other].getSecuritySnapshot().localFingerprint());
+                }
+            }
         }
     }
 
