@@ -49,7 +49,7 @@ class PeerServiceTest {
 
             assertEquals(PeerStatus.RUNNING, started.status());
             assertTrue(started.port() > 0 && started.port() <= 65535);
-            assertEquals(started.port(), peer.getStatus().port());
+            assertEquals(started.port(), peer.getPeerStatus().port());
 
             peer.stopPeer();
             try (ServerSocket rebound = new ServerSocket(started.port())) {
