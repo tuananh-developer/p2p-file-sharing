@@ -16,6 +16,7 @@ import com.tanh.file_sharing.model.FileSearchResponse;
 import com.tanh.file_sharing.model.DownloadAccepted;
 import com.tanh.file_sharing.model.TransferSnapshot;
 import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
+import com.tanh.file_sharing.model.SecuritySnapshot;
 import com.tanh.file_sharing.protocol.FramedJsonChannel;
 import com.tanh.file_sharing.protocol.PeerProtocol;
 import com.tanh.file_sharing.protocol.ProtocolException;
@@ -33,6 +34,11 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
+import java.nio.file.Path;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -60,6 +66,7 @@ public final class PeerService implements AutoCloseable {
     private final ObjectMapper objectMapper;
     private final EventPublisher events;
     private final UUID peerId;
+    private final PeerSecurityContext securityContext;
     private final Object lifecycleLock = new Object();
     private final Object connectionLock = new Object();
     private final Map<UUID, PeerConnection> activeConnections = new ConcurrentHashMap<>();
@@ -71,20 +78,47 @@ public final class PeerService implements AutoCloseable {
     private volatile PeerStatus status = PeerStatus.STOPPED;
     private volatile String bindAddress = "127.0.0.1";
     private volatile int listeningPort;
-    private volatile ServerSocket serverSocket;
+    private volatile SSLServerSocket serverSocket;
     private volatile ExecutorService acceptExecutor;
     private volatile ExecutorService connectionExecutor;
 
     public PeerService(ObjectMapper objectMapper, EventPublisher events) {
-        this(objectMapper, events, UUID.randomUUID());
+        this(objectMapper, events, UUID.randomUUID(), createDefaultSecurityContext());
     }
 
     public PeerService(ObjectMapper objectMapper, EventPublisher events, UUID peerId) {
+        this(objectMapper, events, peerId, createDefaultSecurityContext());
+    }
+
+    /** Test and advanced embedding constructor; production uses the per-user default identity directory. */
+    public PeerService(ObjectMapper objectMapper, EventPublisher events, UUID peerId, Path securityDirectory) {
+        this(objectMapper, events, peerId, createSecurityContext(securityDirectory));
+    }
+
+    private PeerService(ObjectMapper objectMapper, EventPublisher events, UUID peerId,
+            PeerSecurityContext securityContext) {
         this.objectMapper = objectMapper;
         this.events = events == null ? EventPublisher.noop() : events;
         this.peerId = peerId;
+        this.securityContext = securityContext;
         this.transferService = new TransferService(this.events,
                 activeConnections::get, () -> status == PeerStatus.RUNNING);
+    }
+
+    private static PeerSecurityContext createDefaultSecurityContext() {
+        try {
+            return new PeerSecurityContext();
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not initialize the local peer identity.", exception);
+        }
+    }
+
+    private static PeerSecurityContext createSecurityContext(Path directory) {
+        try {
+            return new PeerSecurityContext(directory);
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not initialize the local peer identity.", exception);
+        }
     }
 
     public PeerSnapshot startPeer(String requestedBindAddress, int port) {
@@ -101,12 +135,12 @@ public final class PeerService implements AutoCloseable {
             }
 
             String addressText = requestedBindAddress == null || requestedBindAddress.isBlank()
-                    ? "127.0.0.1" : requestedBindAddress.trim();
+                    ? NetworkAddressResolver.AUTO_BIND_ADDRESS : requestedBindAddress.trim();
             transition(PeerStatus.STARTING);
-            ServerSocket candidate = null;
+            SSLServerSocket candidate = null;
             try {
                 InetAddress address = InetAddress.getByName(addressText);
-                candidate = new ServerSocket();
+                candidate = securityContext.createServerSocket();
                 candidate.setReuseAddress(true);
                 // Port 0 asks the operating system to allocate an available ephemeral port.
                 candidate.bind(new InetSocketAddress(address, port), ACCEPT_BACKLOG);
@@ -210,7 +244,7 @@ public final class PeerService implements AutoCloseable {
             }
 
             listeningPort = 0;
-            bindAddress = "127.0.0.1";
+            bindAddress = NetworkAddressResolver.AUTO_BIND_ADDRESS;
             transition(PeerStatus.STOPPED);
             logActivity("Peer stopped", "INFO");
             return snapshot();
@@ -235,7 +269,12 @@ public final class PeerService implements AutoCloseable {
             }
         }
 
-        Socket socket = new Socket();
+        SSLSocket socket;
+        try {
+            socket = securityContext.createClientSocket();
+        } catch (IOException exception) {
+            throw new PeerException("TLS_INITIALIZATION_FAILED", "Could not initialize secure peer transport.", exception);
+        }
         pendingSockets.add(socket);
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CONNECT_TIMEOUT_MILLIS);
         try {
@@ -245,6 +284,7 @@ public final class PeerService implements AutoCloseable {
                 throw new SocketTimeoutException("Connection deadline exceeded before handshake.");
             }
             socket.setSoTimeout((int) Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+            securityContext.beginClientHandshake(socket);
 
             FramedJsonChannel channel = new FramedJsonChannel(socket, objectMapper);
             channel.writeJson(PeerProtocol.handshake(peerId, listeningPort));
@@ -285,6 +325,12 @@ public final class PeerService implements AutoCloseable {
             closeQuietly(socket);
             throw new PeerException("CONNECTION_REFUSED",
                     "Could not connect to " + normalizedHost + ":" + port + ".", exception);
+        } catch (SSLHandshakeException exception) {
+            closeQuietly(socket);
+            throw new PeerException("PEER_AUTHENTICATION_FAILED",
+                    "TLS 1.3 mutual authentication failed. Both devices must explicitly trust each other's SHA-256 "
+                            + "certificate fingerprint before connecting. " + safeHandshakeMessage(exception),
+                    exception);
         } catch (ProtocolException exception) {
             RemotePeerSnapshot alreadyConnected = findConnectedPeer(socket.getInetAddress(), port);
             closeQuietly(socket);
@@ -331,6 +377,33 @@ public final class PeerService implements AutoCloseable {
         List<RemotePeerSnapshot> peers = new ArrayList<>(knownPeers.values());
         peers.sort(Comparator.comparing(peer -> peer.peerId().toString()));
         return List.copyOf(peers);
+    }
+
+    public SecuritySnapshot getSecuritySnapshot() {
+        return new SecuritySnapshot(PeerSecurityContext.TLS_PROTOCOL,
+                securityContext.getLocalFingerprint(), securityContext.getTrustedFingerprints());
+    }
+
+    public SecuritySnapshot trustPeerFingerprint(String fingerprint) {
+        try {
+            securityContext.trustFingerprint(fingerprint);
+            logActivity("Trusted peer certificate fingerprint added", "INFO");
+            return getSecuritySnapshot();
+        } catch (IOException | IllegalArgumentException exception) {
+            throw new PeerException("INVALID_PEER_FINGERPRINT",
+                    "Could not trust the supplied peer fingerprint: " + exception.getMessage(), exception);
+        }
+    }
+
+    public SecuritySnapshot removeTrustedPeerFingerprint(String fingerprint) {
+        try {
+            securityContext.removeTrustedFingerprint(fingerprint);
+            logActivity("Trusted peer certificate fingerprint removed", "WARN");
+            return getSecuritySnapshot();
+        } catch (IOException | IllegalArgumentException exception) {
+            throw new PeerException("INVALID_PEER_FINGERPRINT",
+                    "Could not remove the supplied peer fingerprint: " + exception.getMessage(), exception);
+        }
     }
 
     public SharedDirectorySnapshot setSharedDirectory(String path) {
@@ -547,7 +620,11 @@ public final class PeerService implements AutoCloseable {
     private void handleIncoming(Socket socket) {
         PeerConnection registered = null;
         try {
-            FramedJsonChannel channel = new FramedJsonChannel(socket, objectMapper);
+            if (!(socket instanceof SSLSocket tlsSocket)) {
+                throw new IOException("Incoming peer socket did not negotiate TLS.");
+            }
+            securityContext.beginServerHandshake(tlsSocket);
+            FramedJsonChannel channel = new FramedJsonChannel(tlsSocket, objectMapper);
             JsonNode request = channel.readJson();
             if (request == null) {
                 throw new ProtocolException("HANDSHAKE_FAILED", "Peer disconnected before sending handshake.");
@@ -725,7 +802,18 @@ public final class PeerService implements AutoCloseable {
     }
 
     private PeerSnapshot snapshot() {
-        return new PeerSnapshot(peerId, status, bindAddress, listeningPort);
+        List<String> addresses = status == PeerStatus.RUNNING
+                ? NetworkAddressResolver.addressesFor(bindAddress) : List.of();
+        return new PeerSnapshot(peerId, status, bindAddress, listeningPort, addresses);
+    }
+
+    private static String safeHandshakeMessage(SSLHandshakeException exception) {
+        Throwable cause = exception;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? "Certificate trust check failed." : message;
     }
 
     private RemotePeerSnapshot findConnectedPeer(InetAddress remoteAddress, int remotePort) {
