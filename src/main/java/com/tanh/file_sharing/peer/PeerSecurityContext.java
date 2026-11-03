@@ -13,8 +13,11 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
-import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.X509ExtendedKeyManager;
+import java.net.Socket;
+import java.security.Principal;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLServerSocketFactory;
 import javax.net.ssl.SSLSocket;
@@ -180,16 +183,9 @@ public final class PeerSecurityContext {
                 return sslContext;
             }
             try {
-                KeyStore keyStore = KeyStore.getInstance("PKCS12");
-                keyStore.load(null, EMPTY_PASSWORD);
-                keyStore.setKeyEntry("local-peer", privateKey, EMPTY_PASSWORD, new Certificate[]{certificate});
-
-                KeyManagerFactory keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-                keyManagers.init(keyStore, EMPTY_PASSWORD);
-
                 SSLContext context = SSLContext.getInstance(TLS_PROTOCOL);
-                context.init(keyManagers.getKeyManagers(), new TrustManager[]{new PinnedPeerTrustManager()},
-                        new SecureRandom());
+                context.init(new KeyManager[]{new LocalIdentityKeyManager()},
+                        new TrustManager[]{new PinnedPeerTrustManager()}, new SecureRandom());
                 sslContext = context;
                 return context;
             } catch (GeneralSecurityException exception) {
@@ -390,6 +386,70 @@ public final class PeerSecurityContext {
     }
 
     private record Identity(PrivateKey privateKey, X509Certificate certificate) {
+    }
+
+    /**
+     * Always presents this peer's Ed25519 identity for both TLS client and server roles.
+     * JSSE's default key manager can omit a self-signed Ed25519 identity when the
+     * issuer hint is unfamiliar, even though TLS 1.3 supports the Ed25519 signature scheme.
+     */
+    private final class LocalIdentityKeyManager extends X509ExtendedKeyManager {
+        private boolean supports(String keyType) {
+            if (keyType == null) {
+                return false;
+            }
+            String algorithm = certificate.getPublicKey().getAlgorithm();
+            return keyType.equalsIgnoreCase(algorithm)
+                    || keyType.equalsIgnoreCase("Ed25519")
+                    || keyType.equalsIgnoreCase("EdDSA");
+        }
+
+        private String choose(String[] keyTypes) {
+            if (keyTypes == null) {
+                return null;
+            }
+            return Arrays.stream(keyTypes).anyMatch(this::supports) ? "local-peer" : null;
+        }
+
+        @Override
+        public String[] getClientAliases(String keyType, java.security.Principal[] issuers) {
+            return supports(keyType) ? new String[]{"local-peer"} : null;
+        }
+
+        @Override
+        public String chooseClientAlias(String[] keyTypes, java.security.Principal[] issuers, java.net.Socket socket) {
+            return choose(keyTypes);
+        }
+
+        @Override
+        public String[] getServerAliases(String keyType, java.security.Principal[] issuers) {
+            return supports(keyType) ? new String[]{"local-peer"} : null;
+        }
+
+        @Override
+        public String chooseServerAlias(String keyType, java.security.Principal[] issuers, java.net.Socket socket) {
+            return supports(keyType) ? "local-peer" : null;
+        }
+
+        @Override
+        public java.security.cert.X509Certificate[] getCertificateChain(String alias) {
+            return "local-peer".equals(alias) ? new X509Certificate[]{certificate} : null;
+        }
+
+        @Override
+        public PrivateKey getPrivateKey(String alias) {
+            return "local-peer".equals(alias) ? privateKey : null;
+        }
+
+        @Override
+        public String chooseEngineClientAlias(String[] keyTypes, java.security.Principal[] issuers, SSLEngine engine) {
+            return choose(keyTypes);
+        }
+
+        @Override
+        public String chooseEngineServerAlias(String keyType, java.security.Principal[] issuers, SSLEngine engine) {
+            return supports(keyType) ? "local-peer" : null;
+        }
     }
 
     private final class PinnedPeerTrustManager implements X509TrustManager {
