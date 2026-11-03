@@ -385,7 +385,9 @@ function installContentSecurityPolicy(): void {
   const connectSources = development
     ? "connect-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173;"
     : "connect-src 'self';";
-  const scriptSources = development ? "script-src 'self' 'unsafe-eval';" : "script-src 'self';";
+  const scriptSources = development
+    ? "script-src 'self' 'unsafe-eval' 'unsafe-inline';"
+    : "script-src 'self';";
   const policy = [
     "default-src 'self';",
     scriptSources,
