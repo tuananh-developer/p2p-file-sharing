@@ -56,8 +56,9 @@ class TransferResumeIntegrationTest {
                 activityEvents.add(event);
             }
         };
-        PeerService source = new PeerService(new ObjectMapper(), EventPublisher.noop());
-        PeerService restartedReceiver = new PeerService(new ObjectMapper(), receiverEvents);
+        PeerService source = createPeer("resume-source", EventPublisher.noop());
+        PeerService restartedReceiver = createPeer("resume-receiver", receiverEvents);
+        trustEachOther(source, restartedReceiver);
         try {
             int sourcePort = availablePort();
             int receiverPort = distinctPort(sourcePort);
@@ -119,8 +120,9 @@ class TransferResumeIntegrationTest {
             }
         };
 
-        PeerService firstSource = new PeerService(new ObjectMapper(), EventPublisher.noop());
-        PeerService firstReceiver = new PeerService(new ObjectMapper(), blockingEvents);
+        PeerService firstSource = createPeer("shutdown-source-peer", EventPublisher.noop());
+        PeerService firstReceiver = createPeer("shutdown-receiver-peer", blockingEvents);
+        trustEachOther(firstSource, firstReceiver);
         PeerService restartedSource = null;
         PeerService restartedReceiver = null;
         Path manifestPath = ResumeManifestStore.manifestPath(destination.resolve("large-archive.bin.part"));
@@ -151,8 +153,9 @@ class TransferResumeIntegrationTest {
             assertTrue(paused.completedChunks() < paused.totalChunks());
 
             firstSource.close();
-            restartedSource = new PeerService(new ObjectMapper(), EventPublisher.noop());
-            restartedReceiver = new PeerService(new ObjectMapper(), EventPublisher.noop());
+            restartedSource = createPeer("restarted-source-peer", EventPublisher.noop());
+            restartedReceiver = createPeer("restarted-receiver-peer", EventPublisher.noop());
+            trustEachOther(restartedSource, restartedReceiver);
             int restartedSourcePort = availablePort();
             int restartedReceiverPort = distinctPort(restartedSourcePort);
             var newSourcePeer = restartedSource.startPeer("127.0.0.1", restartedSourcePort);
@@ -191,6 +194,16 @@ class TransferResumeIntegrationTest {
             firstReceiver.close();
             firstSource.close();
         }
+    }
+
+    private PeerService createPeer(String name, EventPublisher events) {
+        return new PeerService(new ObjectMapper(), events, UUID.randomUUID(),
+                temporaryDirectory.resolve("peer-security").resolve(name));
+    }
+
+    private static void trustEachOther(PeerService first, PeerService second) {
+        first.trustPeerFingerprint(second.getSecuritySnapshot().localFingerprint());
+        second.trustPeerFingerprint(first.getSecuritySnapshot().localFingerprint());
     }
 
     private static String sha256(byte[] bytes) throws Exception {
