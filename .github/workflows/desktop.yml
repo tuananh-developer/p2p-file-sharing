@@ -2,9 +2,9 @@ name: P2P Desktop CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
   pull_request:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
 
 jobs:
   verify:
@@ -26,11 +26,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.17.0
+          run_install: false
       - name: Install desktop dependencies
-        run: npm install --no-audit --no-fund
+        run: pnpm install --no-frozen-lockfile
       - name: Typecheck desktop
-        run: npm run typecheck
+        run: pnpm run typecheck
       - name: Test Java bridge process client
-        run: npm test
+        run: pnpm test
       - name: Build and package Linux desktop app
-        run: npm run package:linux
+        run: pnpm run package:linux
