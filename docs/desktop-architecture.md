@@ -47,6 +47,7 @@ Preload exposes typed methods only:
 - Peer: start, stop, get local status, list, connect, disconnect.
 - Share: choose a directory using a native dialog, get configuration, list local files.
 - Files: list one peer's files and search connected peers.
+- Security: read the local TLS identity fingerprint, add a verified remote SHA-256 fingerprint to the trust list, and revoke a fingerprint.
 - Transfers: choose a destination folder and queue single- or multi-source ranged downloads, cancel, list transfers.
 - Events: subscribe to Java backend events and receive an unsubscribe callback.
 
@@ -67,7 +68,11 @@ The preload imports Electron only; Node process and filesystem APIs remain in Ma
 
 On app close, Main prevents immediate quit, sends `app.shutdown` to Java, closes stdin and waits for a bounded grace period. If the child does not exit, Main escalates to SIGTERM and then SIGKILL. An unexpected process exit rejects outstanding requests and publishes a backend failure event; the UI must not retain a stale RUNNING peer state.
 
-The P2P TCP layer currently targets trusted loopback/LAN environments. Peer authentication and transport encryption are not implemented by this desktop integration.
+The P2P listener defaults to Auto IPv4 binding (`0.0.0.0`) and an OS-assigned listening port (`0`). The Java peer snapshot lists active non-loopback IPv4 addresses and the actual bound port; a user can instead bind to a specific local IPv4 address and fixed port.
+
+P2P traffic uses TLS 1.3 mutual certificate authentication. Each installation stores an RSA-3072 private key and self-signed X.509 certificate under `~/.p2p-file-sharing`; the Renderer sees only the SHA-256 fingerprint, never private-key material. Peers are accepted only when each side has explicitly pinned the other side's certificate fingerprint. Fingerprints must be exchanged over a separate trusted channel. The existing JSON handshake and transfer protocol run inside the TLS session; there is no plaintext fallback.
+
+Auto binding listens on all local IPv4 interfaces, so operators should choose a specific interface when a machine has multiple networks (for example Wi-Fi, VPN, containers, or a VM bridge). TLS does not mitigate denial-of-service; keep the listener on a trusted network and do not expose it directly to the public Internet.
 
 
 ## Multi-source transfer behavior
