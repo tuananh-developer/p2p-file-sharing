@@ -34,6 +34,13 @@ public final class SharedFileSource implements AutoCloseable {
         return channel.read(buffer);
     }
 
+    public void position(long offset) throws IOException {
+        if (offset < 0 || offset > size) {
+            throw new IllegalArgumentException("File position is outside the source file.");
+        }
+        channel.position(offset);
+    }
+
     public long currentSize() throws IOException {
         return channel.size();
     }

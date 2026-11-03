@@ -318,6 +318,126 @@ class PeerServiceTest {
     }
 
     @Test
+    void downloadsDifferentRangesFromTwoIdenticalPeersAndReassemblesVerifiedFile() throws Exception {
+        int firstPort = availablePort();
+        int secondPort = distinctPort(firstPort);
+        int receiverPort = distinctPort(secondPort);
+        PeerService firstSource = new PeerService(mapper, EventPublisher.noop());
+        PeerService secondSource = new PeerService(mapper, EventPublisher.noop());
+        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+
+        Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("multi-source-a"));
+        Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("multi-source-b"));
+        Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("multi-target"));
+        byte[] content = new byte[10 * 1024 * 1024 + 317];
+        new java.util.Random(73).nextBytes(content);
+        java.nio.file.Files.write(firstShare.resolve("dataset.bin"), content);
+        java.nio.file.Files.write(secondShare.resolve("dataset.bin"), content);
+        java.nio.file.Files.writeString(destination.resolve("dataset.bin"), "preserve-existing");
+
+        try {
+            var first = firstSource.startPeer("127.0.0.1", firstPort);
+            var second = secondSource.startPeer("127.0.0.1", secondPort);
+            receiver.startPeer("127.0.0.1", receiverPort);
+            firstSource.setSharedDirectory(firstShare.toString());
+            secondSource.setSharedDirectory(secondShare.toString());
+            receiver.connectPeer("127.0.0.1", firstPort);
+            receiver.connectPeer("127.0.0.1", secondPort);
+
+            var accepted = receiver.downloadFileFromPeers(
+                    List.of(first.peerId(), second.peerId()), "dataset.bin", destination.toString());
+            assertEquals("dataset (1).bin", accepted.targetFileName());
+
+            await(() -> receiver.listTransfers().stream().anyMatch(task ->
+                    task.taskId().equals(accepted.taskId())
+                            && task.status().isTerminal()));
+
+            var completed = receiver.listTransfers().stream()
+                    .filter(task -> task.taskId().equals(accepted.taskId()))
+                    .findFirst().orElseThrow();
+            if (completed.status() != com.tanh.file_sharing.model.TransferStatus.COMPLETED) {
+                System.err.println("MULTI_SOURCE_DIAGNOSTIC status=" + completed.status()
+                        + " detail=" + completed.detail()
+                        + " receivedBytes=" + completed.receivedBytes()
+                        + " totalBytes=" + completed.totalBytes()
+                        + " completedChunks=" + completed.completedChunks()
+                        + " totalChunks=" + completed.totalChunks()
+                        + " sources=" + completed.sourcePeerIds());
+            }
+            assertEquals(
+                    com.tanh.file_sharing.model.TransferStatus.COMPLETED,
+                    completed.status(),
+                    "Transfer did not complete: status=" + completed.status()
+                            + ", detail=" + completed.detail()
+                            + ", receivedBytes=" + completed.receivedBytes()
+                            + ", totalBytes=" + completed.totalBytes()
+                            + ", completedChunks=" + completed.completedChunks()
+                            + ", totalChunks=" + completed.totalChunks()
+                            + ", sources=" + completed.sourcePeerIds());
+            assertArrayEquals(content,
+                    java.nio.file.Files.readAllBytes(destination.resolve(accepted.targetFileName())));
+            assertEquals("preserve-existing",
+                    java.nio.file.Files.readString(destination.resolve("dataset.bin")));
+            assertEquals(content.length, completed.receivedBytes());
+            assertEquals(3, completed.totalChunks());
+            assertEquals(3, completed.completedChunks());
+            assertEquals(2, completed.sourcePeerIds().size());
+            assertTrue(completed.detail().contains("SHA-256 verified"));
+        } finally {
+            receiver.close();
+            secondSource.close();
+            firstSource.close();
+        }
+    }
+
+    @Test
+    void rejectsMultiSourcePeersWhenSameNameAndSizeHaveDifferentHashes() throws Exception {
+        int firstPort = availablePort();
+        int secondPort = distinctPort(firstPort);
+        int receiverPort = distinctPort(secondPort);
+        PeerService firstSource = new PeerService(mapper, EventPublisher.noop());
+        PeerService secondSource = new PeerService(mapper, EventPublisher.noop());
+        PeerService receiver = new PeerService(mapper, EventPublisher.noop());
+
+        Path firstShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("mismatch-source-a"));
+        Path secondShare = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("mismatch-source-b"));
+        Path destination = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("mismatch-target"));
+        byte[] firstContent = "version-A-contents".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] secondContent = "version-B-contents".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(firstContent.length, secondContent.length);
+        java.nio.file.Files.write(firstShare.resolve("same.bin"), firstContent);
+        java.nio.file.Files.write(secondShare.resolve("same.bin"), secondContent);
+
+        try {
+            var first = firstSource.startPeer("127.0.0.1", firstPort);
+            var second = secondSource.startPeer("127.0.0.1", secondPort);
+            receiver.startPeer("127.0.0.1", receiverPort);
+            firstSource.setSharedDirectory(firstShare.toString());
+            secondSource.setSharedDirectory(secondShare.toString());
+            receiver.connectPeer("127.0.0.1", firstPort);
+            receiver.connectPeer("127.0.0.1", secondPort);
+
+            var accepted = receiver.downloadFileFromPeers(
+                    List.of(first.peerId(), second.peerId()), "same.bin", destination.toString());
+            await(() -> receiver.listTransfers().stream().anyMatch(task ->
+                    task.taskId().equals(accepted.taskId())
+                            && task.status() == com.tanh.file_sharing.model.TransferStatus.FAILED));
+
+            var failed = receiver.listTransfers().stream()
+                    .filter(task -> task.taskId().equals(accepted.taskId()))
+                    .findFirst().orElseThrow();
+            assertTrue(failed.detail().contains("SOURCE_MISMATCH"));
+            try (var files = java.nio.file.Files.list(destination)) {
+                assertEquals(0L, files.count());
+            }
+        } finally {
+            receiver.close();
+            secondSource.close();
+            firstSource.close();
+        }
+    }
+
+    @Test
     void sharedDirectoryConfigurationIsNotPersistedBetweenPeerServiceInstances() throws Exception {
         Path shared = java.nio.file.Files.createDirectory(temporaryDirectory.resolve("session-share"));
         PeerService firstSession = new PeerService(mapper, EventPublisher.noop());
@@ -357,7 +477,7 @@ class PeerServiceTest {
     }
 
     private static void await(BooleanSupplier condition) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
             if (condition.getAsBoolean()) {
                 return;

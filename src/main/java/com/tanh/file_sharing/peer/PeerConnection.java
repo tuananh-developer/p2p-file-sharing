@@ -32,6 +32,7 @@ import java.util.logging.Logger;
 public final class PeerConnection {
     private static final Logger LOGGER = Logger.getLogger(PeerConnection.class.getName());
     public static final int MAX_FILE_CHUNK_BYTES = 24 * 1024;
+    public static final long MAX_FILE_RANGE_BYTES = 4L * 1024 * 1024;
     private static final long TRANSFER_IDLE_TIMEOUT_MILLIS = 30_000;
 
     private final Socket socket;
@@ -166,6 +167,198 @@ public final class PeerConnection {
             throw new PeerException("PEER_IO_ERROR", "Could not send a request to the peer.", exception);
         } finally {
             pendingRequests.remove(requestId, responseFuture);
+        }
+    }
+
+    /** Queries the source's immutable metadata snapshot before planning ranged downloads. */
+    public FileMetadata requestFileInfo(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new PeerException("INVALID_ARGUMENT", "A file name is required.");
+        }
+        JsonNode data = sendRequest(PeerProtocol.REQUEST_FILE_INFO,
+                Map.of("fileName", fileName), 60_000);
+        JsonNode nameNode = data.get("fileName");
+        JsonNode sizeNode = data.get("size");
+        JsonNode hashNode = data.get("sha256");
+        if (nameNode == null || !nameNode.isTextual() || !fileName.equals(nameNode.asText())
+                || sizeNode == null || !sizeNode.isIntegralNumber()
+                || !sizeNode.canConvertToLong() || sizeNode.asLong() < 0
+                || hashNode == null || !hashNode.isTextual()
+                || !hashNode.asText().matches("(?i)[0-9a-f]{64}")) {
+            throw new PeerException("INVALID_PEER_RESPONSE", "The peer returned invalid file metadata.");
+        }
+        return new FileMetadata(nameNode.asText(), sizeNode.asLong(),
+                hashNode.asText().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Downloads one bounded range from a peer. The caller supplies the metadata
+     * already agreed by all selected sources; the final assembled file is hashed
+     * again before it can be committed to the destination.
+     */
+    public void downloadFileRange(
+            FileMetadata expectedMetadata,
+            long offset,
+            long length,
+            DownloadSink sink,
+            long metadataTimeoutMillis,
+            BooleanSupplier cancelled) throws InterruptedException {
+        if (closed.get()) {
+            throw new PeerException("PEER_NOT_CONNECTED", "The peer connection is no longer active.");
+        }
+        if (expectedMetadata == null || sink == null || offset < 0 || length < 1
+                || length > MAX_FILE_RANGE_BYTES || offset > expectedMetadata.size()
+                || length > expectedMetadata.size() - offset || metadataTimeoutMillis < 1) {
+            throw new PeerException("INVALID_ARGUMENT", "A valid file range and metadata are required.");
+        }
+
+        String requestId = UUID.randomUUID().toString();
+        CompletableFuture<JsonNode> metadataFuture = new CompletableFuture<>();
+        BlockingQueue<JsonNode> frames = new ArrayBlockingQueue<>(4);
+        pendingRequests.put(requestId, metadataFuture);
+        incomingTransfers.put(requestId, frames);
+
+        try {
+            channel.writeJson(PeerProtocol.request(requestId, PeerProtocol.REQUEST_FILE_RANGE, Map.of(
+                    "fileName", expectedMetadata.fileName(),
+                    "size", expectedMetadata.size(),
+                    "sha256", expectedMetadata.sha256(),
+                    "offset", offset,
+                    "length", length)));
+
+            JsonNode response;
+            try {
+                response = metadataFuture.get(metadataTimeoutMillis, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException exception) {
+                throw new PeerException("PEER_REQUEST_TIMEOUT", "The peer did not accept the requested file range in time.", exception);
+            } catch (ExecutionException exception) {
+                Throwable cause = exception.getCause();
+                if (cause instanceof PeerException peerException) {
+                    throw peerException;
+                }
+                throw new PeerException("PEER_NOT_CONNECTED",
+                        "The peer connection closed before range metadata arrived.", cause);
+            }
+
+            if (!response.path("success").isBoolean()) {
+                throw new PeerException("INVALID_PEER_RESPONSE", "The peer returned a malformed range response.");
+            }
+            if (!response.path("success").asBoolean()) {
+                JsonNode error = response.path("error");
+                if (!error.path("code").isTextual() || !error.path("message").isTextual()) {
+                    throw new PeerException("INVALID_PEER_RESPONSE", "The peer returned a malformed range error.");
+                }
+                throw new PeerException(error.path("code").asText(), error.path("message").asText());
+            }
+
+            JsonNode data = response.path("data");
+            JsonNode nameNode = data.get("fileName");
+            JsonNode sizeNode = data.get("size");
+            JsonNode hashNode = data.get("sha256");
+            JsonNode offsetNode = data.get("offset");
+            JsonNode lengthNode = data.get("length");
+            if (!data.isObject()
+                    || nameNode == null || !nameNode.isTextual()
+                    || !expectedMetadata.fileName().equals(nameNode.asText())
+                    || sizeNode == null || !sizeNode.isIntegralNumber() || !sizeNode.canConvertToLong()
+                    || sizeNode.asLong() != expectedMetadata.size()
+                    || hashNode == null || !hashNode.isTextual()
+                    || !expectedMetadata.sha256().equalsIgnoreCase(hashNode.asText())
+                    || offsetNode == null || !offsetNode.isIntegralNumber() || !offsetNode.canConvertToLong()
+                    || offsetNode.asLong() != offset
+                    || lengthNode == null || !lengthNode.isIntegralNumber() || !lengthNode.canConvertToLong()
+                    || lengthNode.asLong() != length) {
+                throw new PeerException("INVALID_PEER_RESPONSE", "The peer accepted a different file range.");
+            }
+
+            sink.onMetadata(expectedMetadata);
+            long receivedBytes = 0;
+            long expectedSequence = 0;
+            long lastFrameAt = System.nanoTime();
+            while (true) {
+                if (closed.get()) {
+                    throw new PeerException("PEER_NOT_CONNECTED", "The peer disconnected during the range transfer.");
+                }
+                if ((cancelled != null && cancelled.getAsBoolean()) || Thread.currentThread().isInterrupted()) {
+                    sendCancelTransfer(requestId);
+                    throw new PeerException("TRANSFER_CANCELLED", "The range transfer was cancelled.");
+                }
+
+                JsonNode frame = frames.poll(200, TimeUnit.MILLISECONDS);
+                if (frame == null) {
+                    if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastFrameAt)
+                            > TRANSFER_IDLE_TIMEOUT_MILLIS) {
+                        sendCancelTransfer(requestId);
+                        throw new PeerException("TRANSFER_TIMEOUT", "No range data arrived for 30 seconds.");
+                    }
+                    continue;
+                }
+                lastFrameAt = System.nanoTime();
+
+                if (!frame.path("protocolVersion").isIntegralNumber()
+                        || frame.path("protocolVersion").asInt() != PeerProtocol.VERSION) {
+                    throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an unsupported range frame.");
+                }
+
+                String type = frame.path("type").asText("");
+                if (PeerProtocol.FILE_CHUNK.equals(type)) {
+                    JsonNode sequence = frame.get("sequence");
+                    JsonNode dataNode = frame.get("data");
+                    if (sequence == null || !sequence.isIntegralNumber() || sequence.asLong() != expectedSequence
+                            || dataNode == null || !dataNode.isTextual()) {
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an invalid range chunk.");
+                    }
+
+                    byte[] bytes;
+                    try {
+                        bytes = Base64.getDecoder().decode(dataNode.asText());
+                    } catch (IllegalArgumentException exception) {
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent invalid base64 range data.", exception);
+                    }
+                    if (bytes.length < 1 || bytes.length > MAX_FILE_CHUNK_BYTES
+                            || receivedBytes + bytes.length > length) {
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an out-of-range chunk.");
+                    }
+                    sink.onChunk(bytes);
+                    receivedBytes += bytes.length;
+                    expectedSequence++;
+                    continue;
+                }
+
+                if (PeerProtocol.FILE_END.equals(type)) {
+                    JsonNode successNode = frame.get("success");
+                    JsonNode totalNode = frame.get("totalBytes");
+                    if (successNode == null || !successNode.isBoolean()
+                            || totalNode == null || !totalNode.isIntegralNumber()
+                            || !totalNode.canConvertToLong()) {
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an invalid range-end frame.");
+                    }
+                    if (!successNode.asBoolean()) {
+                        JsonNode error = frame.path("error");
+                        throw new PeerException(error.path("code").asText("TRANSFER_FAILED"),
+                                error.path("message").asText("The source could not finish the range."));
+                    }
+                    if (totalNode.asLong() != receivedBytes || receivedBytes != length) {
+                        throw new PeerException("TRANSFER_SIZE_MISMATCH", "The received range length is incorrect.");
+                    }
+                    return;
+                }
+
+                throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an unexpected range frame.");
+            }
+        } catch (InterruptedException exception) {
+            sendCancelTransfer(requestId);
+            Thread.currentThread().interrupt();
+            throw exception;
+        } catch (PeerException exception) {
+            sendCancelTransfer(requestId);
+            throw exception;
+        } catch (IOException exception) {
+            sendCancelTransfer(requestId);
+            throw new PeerException("PEER_IO_ERROR", "Could not receive a range from the peer.", exception);
+        } finally {
+            pendingRequests.remove(requestId, metadataFuture);
+            incomingTransfers.remove(requestId, frames);
         }
     }
 
@@ -498,6 +691,10 @@ public final class PeerConnection {
             streamRequestedFile(requestId, payload);
             return;
         }
+        if (PeerProtocol.REQUEST_FILE_RANGE.equals(operation)) {
+            streamRequestedFileRange(requestId, payload);
+            return;
+        }
         try {
             Map<String, Object> data = requestHandler.handle(operation, payload);
             channel.writeJson(PeerProtocol.successResponse(requestId, data));
@@ -603,6 +800,111 @@ public final class PeerConnection {
         }
     }
 
+    private void streamRequestedFileRange(String requestId, JsonNode payload) {
+        JsonNode nameNode = payload.get("fileName");
+        JsonNode sizeNode = payload.get("size");
+        JsonNode hashNode = payload.get("sha256");
+        JsonNode offsetNode = payload.get("offset");
+        JsonNode lengthNode = payload.get("length");
+        if (nameNode == null || !nameNode.isTextual() || nameNode.asText().isBlank()
+                || nameNode.asText().length() > 255
+                || sizeNode == null || !sizeNode.isIntegralNumber() || !sizeNode.canConvertToLong()
+                || sizeNode.asLong() < 0
+                || hashNode == null || !hashNode.isTextual() || !hashNode.asText().matches("(?i)[0-9a-f]{64}")
+                || offsetNode == null || !offsetNode.isIntegralNumber() || !offsetNode.canConvertToLong()
+                || offsetNode.asLong() < 0
+                || lengthNode == null || !lengthNode.isIntegralNumber() || !lengthNode.canConvertToLong()
+                || lengthNode.asLong() < 1 || lengthNode.asLong() > MAX_FILE_RANGE_BYTES
+                || offsetNode.asLong() > sizeNode.asLong()
+                || lengthNode.asLong() > sizeNode.asLong() - offsetNode.asLong()) {
+            writeErrorResponse(requestId, "INVALID_REQUEST", "A valid file range request is required.");
+            return;
+        }
+
+        String fileName = nameNode.asText();
+        long expectedSize = sizeNode.asLong();
+        long offset = offsetNode.asLong();
+        long requestedLength = lengthNode.asLong();
+        String expectedHash = hashNode.asText().toLowerCase(java.util.Locale.ROOT);
+
+        AtomicBoolean cancellation = new AtomicBoolean(false);
+        if (outboundTransfers.putIfAbsent(requestId, cancellation) != null) {
+            writeErrorResponse(requestId, "DUPLICATE_REQUEST", "This transfer request is already active.");
+            return;
+        }
+
+        boolean metadataSent = false;
+        long sentBytes = 0;
+        long sequence = 0;
+        try (SharedFileSource source = fileProvider.openFileRange(fileName, expectedSize)) {
+            if (cancellation.get()) {
+                throw new PeerException("TRANSFER_CANCELLED", "The requester cancelled the range.");
+            }
+            if (source.size() != expectedSize || source.currentSize() != expectedSize) {
+                throw new PeerException("FILE_CHANGED", "The source file size changed after metadata discovery.");
+            }
+            source.position(offset);
+            channel.writeJson(PeerProtocol.successResponse(requestId, Map.of(
+                    "fileName", source.fileName(),
+                    "size", source.size(),
+                    "sha256", expectedHash,
+                    "offset", offset,
+                    "length", requestedLength)));
+            metadataSent = true;
+
+            while (sentBytes < requestedLength) {
+                if (closed.get() || cancellation.get()) {
+                    throw new PeerException("TRANSFER_CANCELLED", "The requester cancelled the range.");
+                }
+                int chunkLimit = (int) Math.min(MAX_FILE_CHUNK_BYTES, requestedLength - sentBytes);
+                ByteBuffer buffer = ByteBuffer.allocate(chunkLimit);
+                while (buffer.hasRemaining()) {
+                    int read = source.read(buffer);
+                    if (read < 0) {
+                        break;
+                    }
+                    if (read == 0) {
+                        Thread.yield();
+                    }
+                }
+                int length = buffer.position();
+                if (length == 0 || sentBytes + length > requestedLength) {
+                    throw new PeerException("FILE_CHANGED", "The source file changed during range transfer.");
+                }
+                byte[] bytes = java.util.Arrays.copyOf(buffer.array(), length);
+                channel.writeJson(PeerProtocol.fileChunk(
+                        requestId, sequence++, Base64.getEncoder().encodeToString(bytes)));
+                sentBytes += length;
+            }
+
+            if (sentBytes != requestedLength || source.currentSize() != expectedSize) {
+                throw new PeerException("FILE_CHANGED", "The source file changed during range transfer.");
+            }
+            channel.writeJson(PeerProtocol.fileEnd(requestId, true, sentBytes, null, null));
+        } catch (PeerException exception) {
+            if (metadataSent) {
+                writeFileEndError(requestId, sentBytes, exception.getCode(), exception.getMessage());
+            } else {
+                writeErrorResponse(requestId, exception.getCode(), exception.getMessage());
+            }
+        } catch (IOException exception) {
+            if (metadataSent) {
+                writeFileEndError(requestId, sentBytes, "FILE_IO_ERROR", "The source range could not be read.");
+            } else {
+                writeErrorResponse(requestId, "FILE_UNAVAILABLE", "The requested file is unavailable.");
+            }
+        } catch (RuntimeException exception) {
+            LOGGER.log(Level.WARNING, "Could not stream file range for peer " + remotePeerId, exception);
+            if (metadataSent) {
+                writeFileEndError(requestId, sentBytes, "INTERNAL_ERROR", "The source could not finish the range.");
+            } else {
+                writeErrorResponse(requestId, "INTERNAL_ERROR", "The source could not prepare the range.");
+            }
+        } finally {
+            outboundTransfers.remove(requestId, cancellation);
+        }
+    }
+
     private void writeFileEndError(String requestId, long sentBytes, String code, String message) {
         try {
             if (!closed.get()) {
@@ -664,6 +966,19 @@ public final class PeerConnection {
     @FunctionalInterface
     public interface FileProvider {
         SharedFileSource openFile(String fileName);
+
+        default SharedFileSource openFileRange(String fileName, long expectedSize) {
+            SharedFileSource source = openFile(fileName);
+            if (source.size() != expectedSize) {
+                try {
+                    source.close();
+                } catch (IOException ignored) {
+                    // The caller will receive FILE_CHANGED.
+                }
+                throw new PeerException("FILE_CHANGED", "The source file size changed after metadata discovery.");
+            }
+            return source;
+        }
     }
 
     @FunctionalInterface

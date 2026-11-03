@@ -86,6 +86,32 @@ class SharedDirectoryServiceTest {
     }
 
     @Test
+    void opensValidatedRangesWithoutRehashingAndRejectsChangedFileSize() throws Exception {
+        Path shared = Files.createDirectory(temporaryDirectory.resolve("source-range"));
+        byte[] content = "0123456789abcdef".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(shared.resolve("range.txt"), content);
+        SharedDirectoryService service = new SharedDirectoryService();
+        service.setDirectory(shared.toString());
+
+        try (SharedFileSource source = service.openFileRange("range.txt", content.length)) {
+            assertEquals(content.length, source.size());
+            source.position(5);
+            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(4);
+            assertEquals(4, source.read(buffer));
+            assertArrayEquals("5678".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    java.util.Arrays.copyOf(buffer.array(), buffer.position()));
+        }
+
+        PeerException changed = assertThrows(PeerException.class,
+                () -> service.openFileRange("range.txt", content.length + 1));
+        assertEquals("FILE_CHANGED", changed.getCode());
+
+        PeerException traversal = assertThrows(PeerException.class,
+                () -> service.openFileRange("../outside.txt", content.length));
+        assertEquals("FILE_UNAVAILABLE", traversal.getCode());
+    }
+
+    @Test
     void requiresAConfiguredDirectoryBeforeListing() {
         SharedDirectoryService service = new SharedDirectoryService();
 

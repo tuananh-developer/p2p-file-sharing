@@ -1,0 +1,41 @@
+name: P2P Desktop CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main, "feat/**", "fix/**"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 27
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "27"
+          cache: gradle
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: Test and assemble Java runtime distribution
+        run: ./gradlew --no-daemon clean test build installDist
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.17.0
+          run_install: false
+      - name: Install desktop dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck desktop
+        run: pnpm run typecheck
+      - name: Test Java bridge process client
+        run: pnpm test
+      - name: Build and package Linux desktop app
+        run: pnpm run package:linux

@@ -49,8 +49,18 @@ public final class CommandDispatcher {
                     requiredUuid(body, "peerId"),
                     requiredText(body, "fileName"),
                     requiredText(body, "destinationDir")));
+            case "transfer.downloadMulti" -> Map.of("download", peerService.downloadFileFromPeers(
+                    optionalPeerIds(body, "peerIds"),
+                    requiredText(body, "fileName"),
+                    requiredText(body, "destinationDir")));
             case "transfer.cancel" -> Map.of("transfer",
                     peerService.cancelDownload(requiredUuid(body, "taskId")));
+            case "transfer.listResumable" -> Map.of("downloads",
+                    peerService.listResumableDownloads(requiredText(body, "destinationDir")));
+            case "transfer.resume" -> Map.of("download", peerService.resumeDownload(
+                    requiredUuid(body, "taskId"),
+                    optionalPeerIds(body, "peerIds"),
+                    requiredText(body, "destinationDir")));
             case "transfer.list" -> Map.of("transfers", peerService.listTransfers());
             case "app.shutdown" -> shutdownApplication();
             default -> throw new PeerException("UNKNOWN_COMMAND", "Unsupported command: " + command);
