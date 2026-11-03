@@ -42,11 +42,30 @@ class PeerServiceTest {
     }
 
     @Test
+    void allocatesAnAvailablePortWhenZeroIsRequested() throws Exception {
+        PeerService peer = new PeerService(mapper, EventPublisher.noop());
+        try {
+            var started = peer.startPeer("127.0.0.1", 0);
+
+            assertEquals(PeerStatus.RUNNING, started.status());
+            assertTrue(started.port() > 0 && started.port() <= 65535);
+            assertEquals(started.port(), peer.getStatus().port());
+
+            peer.stopPeer();
+            try (ServerSocket rebound = new ServerSocket(started.port())) {
+                assertTrue(rebound.isBound());
+            }
+        } finally {
+            peer.close();
+        }
+    }
+
+    @Test
     void rejectsInvalidPortAndPortAlreadyInUse() throws Exception {
         PeerService peer = new PeerService(mapper, EventPublisher.noop());
         try {
             PeerException invalid = assertThrows(PeerException.class,
-                    () -> peer.startPeer("127.0.0.1", 0));
+                    () -> peer.startPeer("127.0.0.1", -1));
             assertEquals("INVALID_PORT", invalid.getCode());
         } finally {
             peer.close();
