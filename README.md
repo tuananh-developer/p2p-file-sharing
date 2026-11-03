@@ -2,7 +2,7 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core đã có vòng đời peer, file catalog, tải file SHA-256 và tải nhiều nguồn theo range; Electron/React desktop shell đã được tích hợp ở mức MVP. Resume sau khi khởi động lại và xác thực/mã hóa peer chưa thuộc phạm vi hiện tại.
+> **Trạng thái:** Java Core đã có vòng đời peer, file catalog, tải file SHA-256, tải nhiều nguồn theo range và khôi phục download sau khi khởi động lại. Electron/React desktop shell và activity log đã được tích hợp ở mức MVP. Xác thực và mã hóa peer chưa thuộc phạm vi hiện tại.
 
 ## Tech stack
 
@@ -17,7 +17,7 @@
 
 - Fedora Linux (hoặc Linux/macOS/Windows có Java 27 và quyền mở TCP port)
 - JDK 27 (Temurin hoặc OpenJDK tương thích)
-- Node.js 24+ và npm 10+
+- Node.js 24+ và pnpm 12.17.0
 - Không cần database hoặc dịch vụ cloud cho MVP
 
 Kiểm tra Java:
@@ -32,6 +32,12 @@ java -version
 ```bash
 ./gradlew clean test
 ./gradlew build
+```
+
+Cài pnpm 12.17.0 trên Linux/macOS:
+
+```bash
+curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=12.17.0 sh -
 ```
 
 ## Run Java P2P Core
@@ -139,25 +145,25 @@ Dừng peer hoặc yêu cầu Java process kết thúc:
 Cài dependencies frontend, tạo Gradle distribution cho Java Core, sau đó chạy Electron + Vite:
 
 ```bash
-npm install
+pnpm install
 ./gradlew --no-daemon installDist
-npm run dev
+pnpm run dev
 ```
 
-Lệnh `npm run dev` compile Electron Main/Preload, khởi chạy Vite ở loopback và mở cửa sổ desktop. Java backend được Electron tự khởi động từ `build/install/file_sharing/lib`; cần có JDK 27 trong `JAVA_HOME` hoặc `PATH`.
+Lệnh `pnpm run dev` compile Electron Main/Preload, khởi chạy Vite ở loopback và mở cửa sổ desktop. Java backend được Electron tự khởi động từ `build/install/file_sharing/lib`; cần có JDK 27 trong `JAVA_HOME` hoặc `PATH`.
 
 Kiểm tra và build:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 Tạo thư mục ứng dụng Linux (cần chạy `installDist` trước):
 
 ```bash
-npm run package:linux
+pnpm run package:linux
 ```
 
 Có thể override executable Java hoặc thư mục thư viện backend khi phát triển bằng `P2P_JAVA_EXECUTABLE` và `P2P_BACKEND_LIB_DIR`. Renderer không nhận đường dẫn đích tải file tùy ý: hộp thoại hệ thống chọn thư mục được mở từ Electron Main.
@@ -222,5 +228,6 @@ MVP does not authenticate peers or encrypt TCP traffic. Any peer that can connec
 - [x] Allowlisted preload/IPC boundary and backend-failure events
 - [x] React UI for peer lifecycle, shared directory, search, download progress and cancellation
 - [x] Split files into 4 MiB ranges and transfer ranges from multiple peers (FR-26–FR-27)
-- [ ] Persistent resume after restart (FR-28)
+- [x] Persistent resume after restart (FR-28)
+- [x] Session activity log for peer and transfer lifecycle (FR-29)
 - [ ] Verify desktop packaging on Fedora through a full manual multi-peer LAN test
