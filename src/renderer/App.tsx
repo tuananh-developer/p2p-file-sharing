@@ -33,7 +33,7 @@ function App() {
   const [resumableDownloads, setResumableDownloads] = useState<ResumableDownloadSnapshot[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [bindAddress, setBindAddress] = useState("127.0.0.1");
-  const [listenPort, setListenPort] = useState("5001");
+  const [listenPort, setListenPort] = useState("0");
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");
   const [remotePort, setRemotePort] = useState("5002");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -214,9 +214,9 @@ function App() {
 
   const handleStartPeer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const port = parsePort(listenPort);
+    const port = parseListeningPort(listenPort);
     if (port === null) {
-      setNotice({ kind: "error", message: "Listening port must be between 1 and 65535." });
+      setNotice({ kind: "error", message: "Listening port must be between 0 and 65535. Use 0 for automatic allocation." });
       return;
     }
     void runAction("peer-start", async () => {
@@ -424,8 +424,8 @@ function App() {
                 <input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} disabled={backend.status !== "READY"} />
               </label>
               <label>
-                <span>Listening port</span>
-                <input type="number" min="1" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} />
+                <span>Listening port (0 = Auto)</span>
+                <input type="number" min="0" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} />
               </label>
               <div className="form-actions">
                 <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || busy["peer-start"]}>
@@ -434,9 +434,14 @@ function App() {
                 <button className="button button-danger" type="button" onClick={handleStopPeer} disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-stop"]}>
                   {busy["peer-stop"] ? "Stopping…" : "Stop peer"}
                 </button>
+                <span className="helper-text">Use 0 to let the OS choose a free port.</span>
               </div>
             </form>
 
+            <div className="local-peer-meta">
+              <span>Listening on</span>
+              <code>{peer?.status === "RUNNING" ? `${peer.bindAddress}:${peer.port}` : "Not started"}</code>
+            </div>
             <div className="local-peer-meta">
               <span>Peer ID</span>
               <code>{peer?.peerId ?? "Not started"}</code>
@@ -717,6 +722,14 @@ function App() {
       </footer>
     </div>
   );
+}
+
+function parseListeningPort(value: string): number | null {
+  if (value.trim() === "") {
+    return null;
+  }
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 0 && port <= 65_535 ? port : null;
 }
 
 function parsePort(value: string): number | null {
