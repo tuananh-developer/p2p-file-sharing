@@ -10,6 +10,13 @@ export interface PeerSnapshot {
   status: "STOPPED" | "STARTING" | "RUNNING" | "STOPPING";
   bindAddress: string;
   port: number;
+  addresses: string[];
+}
+
+export interface SecuritySnapshot {
+  protocol: "TLSv1.3";
+  localFingerprint: string;
+  trustedFingerprints: string[];
 }
 
 export interface RemotePeerSnapshot {
@@ -114,6 +121,11 @@ export interface P2PBridgeApi {
   files: {
     listRemote(peerId: string): Promise<RemoteFileSearchResult[]>;
     search(keyword: string): Promise<FileSearchResponse>;
+  };
+  security: {
+    getStatus(): Promise<SecuritySnapshot>;
+    trustPeer(fingerprint: string): Promise<SecuritySnapshot>;
+    untrustPeer(fingerprint: string): Promise<SecuritySnapshot>;
   };
   transfer: {
     download(peerId: string, fileName: string): Promise<DownloadAccepted | null>;
