@@ -32,7 +32,7 @@ jobs:
           version: 12.17.0
           run_install: false
       - name: Install desktop dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
       - name: Typecheck desktop
         run: pnpm run typecheck
       - name: Test Java bridge process client
