@@ -169,6 +169,15 @@ function requirePort(value: unknown, field: string, allowAuto = false): number {
   return value;
 }
 
+function requireFingerprint(value: unknown): string {
+  const fingerprint = requireText(value, "fingerprint", 191);
+  const normalized = fingerprint.replace(/[:\\s-]/g, "");
+  if (!/^[0-9a-f]{64}$/i.test(normalized)) {
+    throw new Error("fingerprint must be a SHA-256 certificate fingerprint (64 hexadecimal characters).");
+  }
+  return normalized.toUpperCase();
+}
+
 function requireUuid(value: unknown, field: string): string {
   const id = requireText(value, field, 64);
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
@@ -198,7 +207,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("peer:start", async (_event, input: { bindAddress?: unknown; port?: unknown }) => {
     const bindAddress = input?.bindAddress === undefined
-      ? "127.0.0.1"
+      ? "0.0.0.0"
       : requireText(input.bindAddress, "bindAddress", 253);
     const port = requirePort(input?.port, "port", true);
     const data = await command<{ peer: unknown }>("peer.start", { bindAddress, port });
@@ -230,6 +239,25 @@ function registerIpcHandlers(): void {
   ipcMain.handle("peer:disconnect", async (_event, peerId: unknown) => {
     const data = await command<{ peer: unknown }>("peer.disconnect", { peerId: requireUuid(peerId, "peerId") });
     return data.peer;
+  });
+
+  ipcMain.handle("security:status", async () => {
+    const data = await command<{ security: unknown }>("security.status");
+    return data.security;
+  });
+
+  ipcMain.handle("security:trust-peer", async (_event, fingerprint: unknown) => {
+    const data = await command<{ security: unknown }>("security.trust", {
+      fingerprint: requireFingerprint(fingerprint)
+    });
+    return data.security;
+  });
+
+  ipcMain.handle("security:untrust-peer", async (_event, fingerprint: unknown) => {
+    const data = await command<{ security: unknown }>("security.untrust", {
+      fingerprint: requireFingerprint(fingerprint)
+    });
+    return data.security;
   });
 
   ipcMain.handle("share:choose-directory", async () => {
