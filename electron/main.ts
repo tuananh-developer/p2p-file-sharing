@@ -160,9 +160,11 @@ function requireText(value: unknown, field: string, maxLength = 512): string {
   return value.trim();
 }
 
-function requirePort(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65_535) {
-    throw new Error(field + " must be an integer between 1 and 65535.");
+function requirePort(value: unknown, field: string, allowAuto = false): number {
+  const minimum = allowAuto ? 0 : 1;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > 65_535) {
+    const range = allowAuto ? "0 and 65535" : "1 and 65535";
+    throw new Error(field + " must be an integer between " + range + ".");
   }
   return value;
 }
@@ -198,7 +200,7 @@ function registerIpcHandlers(): void {
     const bindAddress = input?.bindAddress === undefined
       ? "127.0.0.1"
       : requireText(input.bindAddress, "bindAddress", 253);
-    const port = requirePort(input?.port, "port");
+    const port = requirePort(input?.port, "port", true);
     const data = await command<{ peer: unknown }>("peer.start", { bindAddress, port });
     return data.peer;
   });
