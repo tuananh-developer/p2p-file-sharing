@@ -9,7 +9,8 @@ import type {
   SharedDirectorySnapshot,
   SharedFileSnapshot,
   TransferSnapshot,
-  ResumableDownloadSnapshot
+  ResumableDownloadSnapshot,
+  SecuritySnapshot
 } from "../../electron/shared/contracts";
 
 interface ActivityItem {
@@ -32,7 +33,9 @@ function App() {
   const [transfers, setTransfers] = useState<TransferSnapshot[]>([]);
   const [resumableDownloads, setResumableDownloads] = useState<ResumableDownloadSnapshot[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [bindAddress, setBindAddress] = useState("127.0.0.1");
+  const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
+  const [trustedFingerprintInput, setTrustedFingerprintInput] = useState("");
+  const [bindAddress, setBindAddress] = useState("0.0.0.0");
   const [listenPort, setListenPort] = useState("0");
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");
   const [remotePort, setRemotePort] = useState("5002");
@@ -68,20 +71,23 @@ function App() {
       setDirectory(null);
       setLocalFiles([]);
       setTransfers([]);
+      setSecurity(null);
       return;
     }
 
-    const [peerState, knownPeers, shareState, transferList] = await Promise.all([
+    const [peerState, knownPeers, shareState, transferList, securityState] = await Promise.all([
       window.p2p.peer.getStatus().catch(() => null),
       window.p2p.peer.list().catch(() => []),
       window.p2p.share.getDirectory().catch(() => null),
-      window.p2p.transfer.list().catch(() => [])
+      window.p2p.transfer.list().catch(() => []),
+      window.p2p.security.getStatus().catch(() => null)
     ]);
 
     setPeer(peerState);
     setPeers(knownPeers);
     setDirectory(shareState);
     setTransfers(transferList);
+    setSecurity(securityState);
 
     if (shareState?.configured) {
       const files = await window.p2p.share.listLocalFiles().catch(() => []);
@@ -223,6 +229,29 @@ function App() {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
       setNotice({ kind: "success", message: "Peer is listening on " + snapshot.bindAddress + ":" + snapshot.port + "." });
+    });
+  };
+
+  const handleTrustFingerprint = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const fingerprint = trustedFingerprintInput.trim();
+    if (!fingerprint) {
+      setNotice({ kind: "error", message: "Enter the other device's SHA-256 certificate fingerprint." });
+      return;
+    }
+    void runAction("security-trust", async () => {
+      const snapshot = await window.p2p.security.trustPeer(fingerprint);
+      setSecurity(snapshot);
+      setTrustedFingerprintInput("");
+      setNotice({ kind: "success", message: "Peer fingerprint added to the local trust list." });
+    });
+  };
+
+  const handleUntrustFingerprint = (fingerprint: string) => {
+    void runAction("security-untrust-" + fingerprint, async () => {
+      const snapshot = await window.p2p.security.untrustPeer(fingerprint);
+      setSecurity(snapshot);
+      setNotice({ kind: "info", message: "Peer fingerprint removed. Future TLS connections from that identity will be rejected." });
     });
   };
 
@@ -420,8 +449,8 @@ function App() {
 
             <form className="form-grid" onSubmit={handleStartPeer}>
               <label>
-                <span>Bind address</span>
-                <input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} disabled={backend.status !== "READY"} />
+                <span>Bind address (0.0.0.0 = Auto)</span>
+                <input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="0.0.0.0 or a local IP" disabled={backend.status !== "READY"} />
               </label>
               <label>
                 <span>Listening port (0 = Auto)</span>
@@ -434,13 +463,19 @@ function App() {
                 <button className="button button-danger" type="button" onClick={handleStopPeer} disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-stop"]}>
                   {busy["peer-stop"] ? "Stopping…" : "Stop peer"}
                 </button>
-                <span className="helper-text">Use 0 to let the OS choose a free port.</span>
+                <span className="helper-text">Port 0 = Auto. Address 0.0.0.0 listens on all active IPv4 interfaces; enter one local IP to restrict it.</span>
               </div>
             </form>
 
             <div className="local-peer-meta">
-              <span>Listening on</span>
-              <code>{peer?.status === "RUNNING" ? `${peer.bindAddress}:${peer.port}` : "Not started"}</code>
+              <span>Connect using</span>
+              <div className="local-address-list">
+                {peer?.status === "RUNNING" ? (
+                  peer.addresses.length > 0
+                    ? peer.addresses.map((address) => <code key={address}>{address}:{peer.port}</code>)
+                    : <span className="helper-text">No non-loopback IPv4 address detected. Choose a specific interface address or check network connectivity.</span>
+                ) : <code>Not started</code>}
+              </div>
             </div>
             <div className="local-peer-meta">
               <span>Peer ID</span>
@@ -472,6 +507,71 @@ function App() {
                 <span className="helper-text">Start your local peer before connecting.</span>
               </div>
             </form>
+          </article>
+        </section>
+
+        <section className="security-section">
+          <article className="panel security-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">PEER SECURITY</span>
+                <h2>Encrypted and authenticated connections</h2>
+              </div>
+              <span className="state-chip state-running">TLS 1.3 · Mutual authentication</span>
+            </div>
+
+            <div className="security-fingerprint">
+              <span className="security-label">This device's SHA-256 certificate fingerprint</span>
+              <code>{security?.localFingerprint ?? "Loading local identity…"}</code>
+            </div>
+
+            <p className="security-guidance">
+              Exchange fingerprints with the other device through a separate trusted channel (for example, in person).
+              Add each other's fingerprint on both devices before connecting. Never trust a fingerprint received only
+              from the same network connection you are trying to authenticate.
+            </p>
+
+            <form className="security-trust-form" onSubmit={handleTrustFingerprint}>
+              <label>
+                <span>Other device's SHA-256 fingerprint</span>
+                <input
+                  value={trustedFingerprintInput}
+                  onChange={(event) => setTrustedFingerprintInput(event.target.value)}
+                  placeholder="AA:BB:CC:… (64 hexadecimal characters)"
+                  disabled={backend.status !== "READY"}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={backend.status !== "READY" || busy["security-trust"]}
+              >
+                {busy["security-trust"] ? "Adding…" : "Trust fingerprint"}
+              </button>
+            </form>
+
+            <div className="trusted-peer-list">
+              <span className="security-label">Trusted peer fingerprints ({security?.trustedFingerprints.length ?? 0})</span>
+              {security && security.trustedFingerprints.length > 0 ? (
+                security.trustedFingerprints.map((fingerprint) => (
+                  <div className="trusted-peer-row" key={fingerprint}>
+                    <code>{fingerprint}</code>
+                    <button
+                      className="button button-quiet button-small"
+                      type="button"
+                      onClick={() => handleUntrustFingerprint(fingerprint)}
+                      disabled={busy["security-untrust-" + fingerprint]}
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state compact">No trusted peers yet. Add the other device's verified fingerprint on both devices.</div>
+              )}
+            </div>
           </article>
         </section>
 
