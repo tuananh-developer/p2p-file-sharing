@@ -122,16 +122,22 @@ public final class PeerSecurityContext {
             throw new IllegalArgumentException("A peer cannot trust its own identity fingerprint.");
         }
         synchronized (persistenceLock) {
-            trustedFingerprints.add(normalized);
-            persistTrustedFingerprints();
+            Set<String> updated = new TreeSet<>(trustedFingerprints);
+            updated.add(normalized);
+            persistTrustedFingerprints(updated);
+            trustedFingerprints.clear();
+            trustedFingerprints.addAll(updated);
         }
     }
 
     public void removeTrustedFingerprint(String value) throws IOException {
         String normalized = normalizeFingerprint(value);
         synchronized (persistenceLock) {
-            trustedFingerprints.remove(normalized);
-            persistTrustedFingerprints();
+            Set<String> updated = new TreeSet<>(trustedFingerprints);
+            updated.remove(normalized);
+            persistTrustedFingerprints(updated);
+            trustedFingerprints.clear();
+            trustedFingerprints.addAll(updated);
         }
     }
 
@@ -297,8 +303,8 @@ public final class PeerSecurityContext {
         restrictFilePermissions(trustedPeersPath);
     }
 
-    private void persistTrustedFingerprints() throws IOException {
-        List<String> values = new ArrayList<>(trustedFingerprints);
+    private void persistTrustedFingerprints(Set<String> fingerprints) throws IOException {
+        List<String> values = new ArrayList<>(fingerprints);
         Collections.sort(values);
         String content = values.isEmpty() ? "" : String.join(System.lineSeparator(), values) + System.lineSeparator();
         writeIdentityFile(trustedPeersPath, content.getBytes(StandardCharsets.UTF_8));
@@ -406,7 +412,9 @@ public final class PeerSecurityContext {
 
         @Override
         public X509Certificate[] getAcceptedIssuers() {
-            return new X509Certificate[0];
+            // All generated peer certificates use the same self-signed issuer DN.
+            // Advertise it so the JSSE client key manager selects our mutual-TLS certificate.
+            return new X509Certificate[]{certificate};
         }
     }
 }
