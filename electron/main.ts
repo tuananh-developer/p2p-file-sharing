@@ -426,7 +426,57 @@ function createWindow(): void {
     }
   });
 
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  let windowShown = false;
+  let showFallbackTimer: NodeJS.Timeout | null = null;
+
+  const showMainWindow = (reason: string): void => {
+    const window = mainWindow;
+    if (!window || window.isDestroyed() || windowShown) {
+      return;
+    }
+
+    windowShown = true;
+    if (showFallbackTimer) {
+      clearTimeout(showFallbackTimer);
+      showFallbackTimer = null;
+    }
+
+    if (reason !== "ready-to-show") {
+      console.warn("[Electron] Showing window via fallback:", reason);
+    }
+    window.show();
+  };
+
+  mainWindow.once("ready-to-show", () => showMainWindow("ready-to-show"));
+
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (windowShown) {
+      return;
+    }
+
+    // Some virtualized Linux desktops finish loading the renderer without
+    // emitting ready-to-show. Do not leave the BrowserWindow hidden forever.
+    showFallbackTimer = setTimeout(() => {
+      showMainWindow("renderer-finished-loading");
+    }, 2_000);
+  });
+
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) {
+        return;
+      }
+
+      console.error("[Electron] Main frame failed to load:", {
+        errorCode,
+        errorDescription,
+        validatedURL
+      });
+      showMainWindow("renderer-load-failed");
+    }
+  );
+
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   // The app is a single-page renderer; deny all renderer-initiated navigation.
   // Initial loadURL/loadFile calls below are initiated by the trusted Main process.
@@ -441,6 +491,10 @@ function createWindow(): void {
   }
 
   mainWindow.on("closed", () => {
+    if (showFallbackTimer) {
+      clearTimeout(showFallbackTimer);
+      showFallbackTimer = null;
+    }
     mainWindow = null;
   });
 }
