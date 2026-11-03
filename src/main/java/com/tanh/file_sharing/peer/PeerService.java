@@ -668,7 +668,7 @@ public final class PeerService implements AutoCloseable {
                 registered.closeSilently();
             }
             if (status == PeerStatus.RUNNING) {
-                LOGGER.log(Level.FINE, "Incoming peer connection failed.", exception);
+                LOGGER.log(Level.WARNING, "Incoming peer connection failed during TLS or protocol handshake.", exception);
             }
         } finally {
             pendingSockets.remove(socket);
