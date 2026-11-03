@@ -1,0 +1,15 @@
+packages:
+  - .
+
+nodeLinker: hoisted
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+
+overrides:
+  electron-winstaller: 5.4.4
+
+patchedDependencies:
+  electron-winstaller@5.4.4: patches/electron-winstaller@5.4.4.patch
