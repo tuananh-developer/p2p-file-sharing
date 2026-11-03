@@ -14,6 +14,11 @@ const api: P2PBridgeApi = {
     connect: (input) => ipcRenderer.invoke("peer:connect", input),
     disconnect: (peerId) => ipcRenderer.invoke("peer:disconnect", peerId)
   },
+  security: {
+    getStatus: () => ipcRenderer.invoke("security:status"),
+    trustPeer: (fingerprint) => ipcRenderer.invoke("security:trust-peer", fingerprint),
+    untrustPeer: (fingerprint) => ipcRenderer.invoke("security:untrust-peer", fingerprint)
+  },
   share: {
     chooseAndSetDirectory: () => ipcRenderer.invoke("share:choose-directory"),
     getDirectory: () => ipcRenderer.invoke("share:get-directory"),
