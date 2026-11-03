@@ -100,7 +100,11 @@ public final class PeerSecurityContext {
         Identity identity = loadOrCreateIdentity();
         this.privateKey = identity.privateKey();
         this.certificate = identity.certificate();
-        this.localFingerprint = fingerprint(this.certificate);
+        try {
+            this.localFingerprint = fingerprint(this.certificate);
+        } catch (CertificateException exception) {
+            throw new IOException("Could not calculate the local peer identity fingerprint.", exception);
+        }
         loadTrustedFingerprints();
     }
 
@@ -256,8 +260,7 @@ public final class PeerSecurityContext {
                 throw exception;
             }
             return new Identity(pair.getPrivate(), cert);
-        } catch (GeneralSecurityException | org.bouncycastle.operator.OperatorCreationException
-                | org.bouncycastle.cert.CertException exception) {
+        } catch (GeneralSecurityException | org.bouncycastle.operator.OperatorCreationException exception) {
             throw new IOException("Could not create a persistent Ed25519 peer identity.", exception);
         }
     }
