@@ -63,7 +63,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Owns the local Ed25519 identity and the explicitly trusted peer certificate pins.
+ * Owns the local RSA-3072 identity and the explicitly trusted peer certificate pins.
  *
  * Private key files are restricted to the current OS user (0600 on POSIX systems).
  * Peer traffic is accepted only over TLS 1.3 with mutual certificate authentication.
@@ -72,8 +72,8 @@ public final class PeerSecurityContext {
     public static final String TLS_PROTOCOL = "TLSv1.3";
     private static final Logger LOGGER = Logger.getLogger(PeerSecurityContext.class.getName());
     private static final char[] EMPTY_PASSWORD = new char[0];
-    private static final String IDENTITY_KEY_FILE = "identity-ed25519.pk8";
-    private static final String IDENTITY_CERT_FILE = "identity-ed25519.cer";
+    private static final String IDENTITY_KEY_FILE = "identity-rsa3072.pk8";
+    private static final String IDENTITY_CERT_FILE = "identity-rsa3072.cer";
     private static final String TRUSTED_PEERS_FILE = "trusted-peer-fingerprints.txt";
 
     private final Path directory;
@@ -209,7 +209,7 @@ public final class PeerSecurityContext {
             PrivateKey key;
             X509Certificate cert;
             try {
-                key = KeyFactory.getInstance("Ed25519").generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
+                key = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
                 try (InputStream input = Files.newInputStream(certificatePath)) {
                     cert = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
                 }
@@ -228,7 +228,8 @@ public final class PeerSecurityContext {
             if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
                 Security.addProvider(new BouncyCastleProvider());
             }
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(3072, new SecureRandom());
             KeyPair pair = generator.generateKeyPair();
 
             Instant now = Instant.now();
@@ -246,7 +247,7 @@ public final class PeerSecurityContext {
             builder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(
                     new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth}));
 
-            ContentSigner signer = new JcaContentSignerBuilder("Ed25519")
+            ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA")
                     .setProvider(BouncyCastleProvider.PROVIDER_NAME)
                     .build(pair.getPrivate());
             X509CertificateHolder holder = builder.build(signer);
@@ -264,14 +265,14 @@ public final class PeerSecurityContext {
             }
             return new Identity(pair.getPrivate(), cert);
         } catch (GeneralSecurityException | org.bouncycastle.operator.OperatorCreationException exception) {
-            throw new IOException("Could not create a persistent Ed25519 peer identity.", exception);
+            throw new IOException("Could not create a persistent RSA-3072 peer identity.", exception);
         }
     }
 
     private void verifyKeyPair(PrivateKey key, X509Certificate cert) throws GeneralSecurityException {
         byte[] challenge = new byte[32];
         new SecureRandom().nextBytes(challenge);
-        java.security.Signature signature = java.security.Signature.getInstance("Ed25519");
+        java.security.Signature signature = java.security.Signature.getInstance("SHA256withRSA");
         signature.initSign(key);
         signature.update(challenge);
         byte[] signed = signature.sign();
@@ -390,9 +391,9 @@ public final class PeerSecurityContext {
     }
 
     /**
-     * Always presents this peer's Ed25519 identity for both TLS client and server roles.
-     * JSSE's default key manager can omit a self-signed Ed25519 identity when the
-     * issuer hint is unfamiliar, even though TLS 1.3 supports the Ed25519 signature scheme.
+     * Always presents this peer's RSA-3072 identity for both TLS client and server roles.
+     * JSSE's default key manager can omit a self-signed RSA-3072 identity when the
+     * issuer hint is unfamiliar, even though TLS 1.3 supports the RSA-3072 signature scheme.
      */
     private final class LocalIdentityKeyManager extends X509ExtendedKeyManager {
         private boolean supports(String keyType) {
@@ -401,8 +402,8 @@ public final class PeerSecurityContext {
             }
             String algorithm = certificate.getPublicKey().getAlgorithm();
             return keyType.equalsIgnoreCase(algorithm)
-                    || keyType.equalsIgnoreCase("Ed25519")
-                    || keyType.equalsIgnoreCase("EdDSA");
+                    || keyType.equalsIgnoreCase("RSA")
+                    || keyType.equalsIgnoreCase("RSASSA-PSS");
         }
 
         private String choose(String[] keyTypes) {
