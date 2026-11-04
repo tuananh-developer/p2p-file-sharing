@@ -8,7 +8,8 @@
 
 - Java 27
 - Gradle 9.8.2 (Gradle Wrapper)
-- TCP/IP sockets
+- TCP/IP sockets (LAN transport)
+- WebRTC DataChannels with ICE/STUN/TURN (Internet transport)
 - JSON Lines bridge (Jackson)
 - JUnit Jupiter
 - Desktop UI: Electron 45, React 19, TypeScript 6, Vite 8
