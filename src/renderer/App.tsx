@@ -818,7 +818,7 @@ function App() {
                         <button
                           className="button button-quiet button-small"
                           onClick={() => handleSendInternetFile(file.fileName)}
-                          disabled={busy["internet-send-" + file.fileName] || !!internetProgress}
+                          disabled={busy["internet-send-" + file.fileName] || (!!internetProgress && internetProgress.status !== "COMPLETED")}
                         >
                           Send
                         </button>
