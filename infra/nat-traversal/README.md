@@ -6,7 +6,7 @@ This directory contains the first server-side layer for Internet peer connectivi
 - **TURN (coturn):** optional relay infrastructure for peers that cannot establish a direct ICE path.
 - **Caddy:** terminates HTTPS for the signaling API and obtains/renews certificates automatically.
 
-The desktop application does **not** consume this service yet. The current Java TCP/TLS transport remains the LAN transport. The next client-side change must add WebRTC ICE + DataChannel, request room/TURN configuration from this service, and transfer file chunks over the DataChannel. Do not describe public-Internet transfer as supported until that client work and cross-network tests are complete.
+The desktop application now consumes the signaling service through its WebRTC ICE + DataChannel Internet transport. The existing Java TCP/TLS transport remains the LAN/reachable-peer transport. Public Internet use still requires deployment at a reachable HTTPS hostname; restrictive NATs require a configured and reachable TURN relay. Cross-network manual validation is still required before calling the feature production-ready.
 
 ## Why this is separate from the Java TCP listener
 
