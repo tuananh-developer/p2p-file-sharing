@@ -47,7 +47,7 @@ function App() {
   const [remotePort, setRemotePort] = useState("5002");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; message: string } | null>(null);
-  const [signalingUrl, setSignalingUrl] = useState("https://signal.example.com");
+  const [signalingUrl, setSignalingUrl] = useState(import.meta.env.VITE_SIGNALING_URL ?? "");
   const [inviteInput, setInviteInput] = useState("");
   const [internetState, setInternetState] = useState<InternetSessionSnapshot>({
     status: "IDLE",
