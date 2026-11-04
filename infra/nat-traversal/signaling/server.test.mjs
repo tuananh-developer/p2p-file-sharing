@@ -223,6 +223,39 @@ test("returns STUN-only ICE configuration when TURN is not configured", async ()
   });
 });
 
+test("rate limits signaling messages per peer", async () => {
+  await withServer({}, async (baseUrl) => {
+    const room = await createRoom(baseUrl);
+    await fetch(baseUrl + "/v1/rooms/" + room.roomId + "/join", {
+      method: "POST",
+      headers: {
+        ...roomHeaders(room, PEER_A),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+
+    let lastStatus = 0;
+    for (let index = 0; index < 241; index += 1) {
+      const response = await fetch(baseUrl + "/v1/rooms/" + room.roomId + "/messages", {
+        method: "POST",
+        headers: {
+          ...roomHeaders(room, PEER_A),
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          toPeerId: PEER_B,
+          type: "ice-candidate",
+          payload: { candidate: "candidate-" + index }
+        })
+      });
+      lastStatus = response.status;
+      if (index < 240) assert.equal(lastStatus, 202);
+    }
+    assert.equal(lastStatus, 429);
+  });
+});
+
 test("expires rendezvous rooms", async () => {
   let clock = Date.now();
   await withServer({ now: () => clock, roomTtlMs: 1000 }, async (baseUrl) => {
