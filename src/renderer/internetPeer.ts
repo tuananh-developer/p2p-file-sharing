@@ -675,8 +675,9 @@ export class InternetPeerSession {
         if (this.outgoing?.id === message.transferId) await this.pump();
         break;
       case "file-reject":
-        if (this.outgoing?.id === message.transferId) {
+        {
           const transfer = this.outgoing;
+          if (!transfer || transfer.id !== message.transferId) break;
           this.outgoing = null;
           await this.files.closeSharedFile(transfer.handleId).catch(() => undefined);
           this.callbacks.onProgress({
@@ -766,12 +767,14 @@ export class InternetPeerSession {
         break;
       }
       case "file-cancel": {
-        if (this.outgoing?.id === message.transferId) {
-          await this.files.closeSharedFile(this.outgoing.handleId).catch(() => undefined);
+        const outgoing = this.outgoing;
+        if (outgoing && outgoing.id === message.transferId) {
+          await this.files.closeSharedFile(outgoing.handleId).catch(() => undefined);
           this.outgoing = null;
         }
-        if (this.incoming?.id === message.transferId) {
-          await this.files.abortReceive(this.incoming.handleId).catch(() => undefined);
+        const incoming = this.incoming;
+        if (incoming && incoming.id === message.transferId) {
+          await this.files.abortReceive(incoming.handleId).catch(() => undefined);
           this.incoming = null;
         }
         this.callbacks.onProgress(null);
@@ -802,7 +805,9 @@ export class InternetPeerSession {
           offset: transfer.offset,
           length
         }));
-        channel.send(chunk);
+        const payload = new ArrayBuffer(chunk.byteLength);
+        new Uint8Array(payload).set(chunk);
+        channel.send(payload);
         transfer.offset += length;
       }
       if (transfer.offset === transfer.size && transfer.acked === transfer.size && !transfer.endSent) {
