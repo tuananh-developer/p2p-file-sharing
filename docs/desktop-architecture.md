@@ -78,3 +78,13 @@ Auto binding listens on all local IPv4 interfaces, so operators should choose a 
 ## Multi-source transfer behavior
 
 The Renderer groups search hits by filename and advertised size and passes candidate peer IDs to transfer.downloadMulti. Java independently requests source metadata and only assembles bytes from peers with matching complete-file SHA-256. The Electron layer never handles file bytes. The transfer service uses 4 MiB logical ranges, at most eight concurrent range workers, offset-based writes into the existing .part staging file, retry-on-another-matching-peer, and a final full-file SHA-256 check before the no-overwrite rename.
+
+## Internet transport
+
+The desktop renderer uses Chromium's WebRTC implementation for Internet sessions. It creates a short-lived rendezvous room through the HTTPS signaling API, exchanges complete SDP offer/answer descriptions, and waits for ICE gathering to finish before forwarding SDP. Trickle ICE candidates are not currently used. WebRTC DataChannels carry file-control messages and bounded binary chunks; the signaling service never receives file bytes or local filesystem paths.
+
+The Java Core's peer UUID identifies each running backend session and is available even when its TCP listener is stopped. Internet-only sessions do not start the Java TCP listener. The Java TCP/TLS transport remains available for LAN and other directly reachable peers.
+
+Before file operations, each renderer reads the SHA-256 DTLS certificate fingerprints from its local and remote SDP, derives an eight-digit safety code, and requires both users to confirm the matching code over a separate trusted channel. WebRTC DTLS encrypts the DataChannel. The safety-code comparison is the application-layer check against a signaling intermediary substituting SDP. WebRTC safety-code approvals are session-scoped; the persistent RSA certificate pin store continues to protect the Java TLS transport.
+
+File sends use a reliable ordered DataChannel with 48 KiB binary chunks and at most four chunks outstanding. The receiver serializes writes through the Electron Main process to a user-selected temporary file, acknowledges completed chunks, verifies SHA-256, and atomically renames the completed file. The current Internet path does not resume interrupted transfers; Java TCP/LAN transfers retain their existing resumable-download support.
