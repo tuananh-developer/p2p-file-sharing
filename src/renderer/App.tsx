@@ -413,8 +413,8 @@ function App() {
   };
 
   const createInternetSession = (): InternetPeerSession => {
-    if (!peer || peer.status !== "RUNNING") {
-      throw new Error("Start your local peer before creating or joining an Internet session.");
+    if (!peer?.peerId) {
+      throw new Error("The local peer identity is not available. Check that the Java backend is ready.");
     }
     if (internetSession.current) {
       throw new Error("Close the current Internet session before starting another one.");
@@ -725,12 +725,12 @@ function App() {
               <button
                 className="button button-primary"
                 onClick={handleCreateInternetInvite}
-                disabled={backend.status !== "READY" || peer?.status !== "RUNNING" ||
+                disabled={backend.status !== "READY" || !peer?.peerId ||
                   !!internetSession.current || busy["internet-create"]}
               >
                 {busy["internet-create"] ? "Creating…" : "Create invite"}
               </button>
-              <span className="helper-text">The local peer must be running. Invite codes contain a temporary room secret; share privately.</span>
+              <span className="helper-text">Uses the local peer identity; the TCP listener does not need to be started. Invite codes contain a temporary room secret, so share privately.</span>
             </div>
 
             {internetState.invite && (
@@ -759,7 +759,7 @@ function App() {
               <button
                 className="button button-secondary"
                 onClick={handleJoinInternetInvite}
-                disabled={backend.status !== "READY" || peer?.status !== "RUNNING" ||
+                disabled={backend.status !== "READY" || !peer?.peerId ||
                   !inviteInput.trim() || !!internetSession.current || busy["internet-join"]}
               >
                 {busy["internet-join"] ? "Joining…" : "Join peer"}
