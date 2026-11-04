@@ -36,6 +36,15 @@ const api: P2PBridgeApi = {
     listResumable: () => ipcRenderer.invoke("transfer:list-resumable"),
     resume: (taskId, peerIds) => ipcRenderer.invoke("transfer:resume", { taskId, peerIds })
   },
+  internet: {
+    openSharedFile: (fileName) => ipcRenderer.invoke("internet:open-shared-file", fileName),
+    readSharedFileChunk: (input) => ipcRenderer.invoke("internet:read-shared-file-chunk", input),
+    closeSharedFile: (handleId) => ipcRenderer.invoke("internet:close-shared-file", handleId),
+    beginReceive: (input) => ipcRenderer.invoke("internet:begin-receive", input),
+    writeReceivedChunk: (input) => ipcRenderer.invoke("internet:write-received-chunk", input),
+    completeReceive: (input) => ipcRenderer.invoke("internet:complete-receive", input),
+    abortReceive: (handleId) => ipcRenderer.invoke("internet:abort-receive", handleId)
+  },
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: BackendEvent) => listener(payload);
     ipcRenderer.on("p2p:event", handler);

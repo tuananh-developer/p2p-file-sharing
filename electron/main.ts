@@ -6,8 +6,11 @@ import {
   session,
   type OpenDialogOptions
 } from "electron";
+import { constants as fsConstants } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { open, realpath, rename, unlink, type FileHandle } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
 import type { BackendEvent, BackendStatusSnapshot } from "./shared/contracts";
 
@@ -19,6 +22,244 @@ let backendStatus: BackendStatusSnapshot = { status: "STARTING" };
 let backendStart: Promise<BackendStatusSnapshot> | null = null;
 let isQuitting = false;
 let resumableDirectory: string | null = null;
+
+const MAX_INTERNET_FILE_BYTES = 50 * 1024 * 1024 * 1024;
+const MAX_INTERNET_CHUNK_BYTES = 48 * 1024;
+
+interface OutgoingFileHandle {
+  handle: FileHandle;
+  fileName: string;
+  size: number;
+  sha256: string;
+}
+
+interface IncomingFileHandle {
+  handle: FileHandle;
+  fileName: string;
+  targetPath: string;
+  temporaryPath: string;
+  size: number;
+  nextOffset: number;
+  hash: ReturnType<typeof createHash>;
+}
+
+const outgoingFileHandles = new Map<string, OutgoingFileHandle>();
+const incomingFileHandles = new Map<string, IncomingFileHandle>();
+
+function requireHandleId(value: unknown): string {
+  return requireUuid(value, "handleId");
+}
+
+async function getCanonicalSharedDirectory(): Promise<string> {
+  requireBackendReady();
+  const data = await command<{ sharedDirectory: { configured: boolean; path: string | null } }>("share.getDirectory");
+  const directory = data.sharedDirectory;
+  if (!directory?.configured || typeof directory.path !== "string" || !directory.path.trim()) {
+    throw new Error("Choose a shared directory before sending files over the Internet.");
+  }
+  return realpath(directory.path);
+}
+
+async function openInternetSharedFile(fileNameValue: unknown): Promise<{
+  handleId: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+}> {
+  const fileName = requireFileName(fileNameValue);
+  const directory = await getCanonicalSharedDirectory();
+  const filePath = join(directory, fileName);
+  if (dirname(filePath) !== directory) {
+    throw new Error("The requested shared file is outside the configured directory.");
+  }
+
+  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open(filePath, fsConstants.O_RDONLY | noFollow);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size < 0 || before.size > MAX_INTERNET_FILE_BYTES) {
+      throw new Error("The selected file is not a regular file or exceeds the 50 GiB transfer limit.");
+    }
+
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < before.size) {
+      const length = Math.min(buffer.length, before.size - offset);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      if (bytesRead !== length) {
+        throw new Error("The shared file changed or became unreadable while hashing.");
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+
+    const after = await handle.stat();
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+      throw new Error("The shared file changed while its SHA-256 digest was calculated.");
+    }
+
+    const handleId = randomUUID();
+    const snapshot = {
+      handleId,
+      fileName,
+      size: before.size,
+      sha256: hash.digest("hex")
+    };
+    outgoingFileHandles.set(handleId, { handle, ...snapshot });
+    return snapshot;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function readInternetSharedFileChunk(input: {
+  handleId?: unknown;
+  offset?: unknown;
+  length?: unknown;
+}): Promise<Uint8Array> {
+  const handleId = requireHandleId(input?.handleId);
+  const source = outgoingFileHandles.get(handleId);
+  if (!source) {
+    throw new Error("The shared file handle is no longer available.");
+  }
+  const offset = input?.offset;
+  const length = input?.length;
+  if (!Number.isSafeInteger(offset) || typeof offset !== "number" || offset < 0 ||
+      !Number.isInteger(length) || typeof length !== "number" ||
+      length < 1 || length > MAX_INTERNET_CHUNK_BYTES || offset + length > source.size) {
+    throw new Error("The requested file chunk has an invalid offset or length.");
+  }
+
+  const buffer = Buffer.allocUnsafe(length);
+  const { bytesRead } = await source.handle.read(buffer, 0, length, offset);
+  if (bytesRead !== length) {
+    throw new Error("The shared file changed or became unreadable during transfer.");
+  }
+  return new Uint8Array(buffer);
+}
+
+async function closeInternetSharedFile(handleIdValue: unknown): Promise<void> {
+  const handleId = requireHandleId(handleIdValue);
+  const source = outgoingFileHandles.get(handleId);
+  if (!source) return;
+  outgoingFileHandles.delete(handleId);
+  await source.handle.close();
+}
+
+async function beginInternetReceive(input: { fileName?: unknown; size?: unknown }): Promise<{
+  handleId: string;
+  fileName: string;
+  size: number;
+} | null> {
+  const fileName = requireFileName(input?.fileName);
+  const size = input?.size;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || size > MAX_INTERNET_FILE_BYTES) {
+    throw new Error("The incoming file size is invalid or exceeds the 50 GiB transfer limit.");
+  }
+
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, {
+      title: "Save incoming peer file",
+      defaultPath: fileName,
+      buttonLabel: "Save file"
+    })
+    : await dialog.showSaveDialog({ title: "Save incoming peer file", defaultPath: fileName, buttonLabel: "Save file" });
+  if (result.canceled || !result.filePath) return null;
+
+  const targetPath = resolve(result.filePath);
+  const handleId = randomUUID();
+  const temporaryPath = join(dirname(targetPath), "." + basename(targetPath) + "." + handleId + ".part");
+  const handle = await open(temporaryPath, "wx", 0o600);
+  incomingFileHandles.set(handleId, {
+    handle,
+    fileName: basename(targetPath),
+    targetPath,
+    temporaryPath,
+    size,
+    nextOffset: 0,
+    hash: createHash("sha256")
+  });
+  return { handleId, fileName: basename(targetPath), size };
+}
+
+async function writeInternetReceiveChunk(input: {
+  handleId?: unknown;
+  offset?: unknown;
+  chunk?: unknown;
+}): Promise<number> {
+  const handleId = requireHandleId(input?.handleId);
+  const receive = incomingFileHandles.get(handleId);
+  if (!receive) throw new Error("The incoming file handle is no longer available.");
+  const chunk = input?.chunk;
+  if (!(chunk instanceof Uint8Array) || chunk.byteLength < 1 || chunk.byteLength > MAX_INTERNET_CHUNK_BYTES) {
+    throw new Error("An incoming chunk must contain between 1 byte and 48 KiB.");
+  }
+  const offset = input?.offset;
+  if (typeof offset !== "number" || !Number.isSafeInteger(offset) ||
+      offset !== receive.nextOffset || offset + chunk.byteLength > receive.size) {
+    throw new Error("Incoming file chunks must be sequential and within the advertised file size.");
+  }
+
+  const buffer = Buffer.from(chunk);
+  let written = 0;
+  while (written < buffer.length) {
+    const result = await receive.handle.write(buffer, written, buffer.length - written, offset + written);
+    if (result.bytesWritten <= 0) throw new Error("Could not write the incoming file chunk.");
+    written += result.bytesWritten;
+  }
+  receive.hash.update(buffer);
+  receive.nextOffset += buffer.length;
+  return receive.nextOffset;
+}
+
+async function abortInternetReceive(handleIdValue: unknown): Promise<void> {
+  const handleId = requireHandleId(handleIdValue);
+  const receive = incomingFileHandles.get(handleId);
+  if (!receive) return;
+  incomingFileHandles.delete(handleId);
+  await receive.handle.close().catch(() => undefined);
+  await unlink(receive.temporaryPath).catch(() => undefined);
+}
+
+async function completeInternetReceive(input: { handleId?: unknown; sha256?: unknown }): Promise<{
+  fileName: string;
+  size: number;
+  sha256: string;
+}> {
+  const handleId = requireHandleId(input?.handleId);
+  const receive = incomingFileHandles.get(handleId);
+  if (!receive) throw new Error("The incoming file handle is no longer available.");
+  const expectedHash = requireFingerprint(input?.sha256).toLowerCase();
+  if (receive.nextOffset !== receive.size) {
+    throw new Error("The incoming file is incomplete; refusing to finalize it.");
+  }
+  const actualHash = receive.hash.digest("hex");
+  if (actualHash !== expectedHash) {
+    await abortInternetReceive(handleId);
+    throw new Error("The received file failed SHA-256 verification.");
+  }
+
+  await receive.handle.sync();
+  await receive.handle.close();
+  try {
+    await rename(receive.temporaryPath, receive.targetPath);
+  } catch (error) {
+    await unlink(receive.temporaryPath).catch(() => undefined);
+    incomingFileHandles.delete(handleId);
+    throw error;
+  }
+  incomingFileHandles.delete(handleId);
+  return { fileName: receive.fileName, size: receive.size, sha256: actualHash };
+}
+
+async function cleanupInternetFileHandles(): Promise<void> {
+  const outgoing = [...outgoingFileHandles.keys()];
+  const incoming = [...incomingFileHandles.keys()];
+  await Promise.all(outgoing.map((handleId) => closeInternetSharedFile(handleId).catch(() => undefined)));
+  await Promise.all(incoming.map((handleId) => abortInternetReceive(handleId).catch(() => undefined)));
+}
 
 function publishEvent(event: BackendEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -391,6 +632,29 @@ function registerIpcHandlers(): void {
     return data.downloads;
   });
 
+  ipcMain.handle("internet:open-shared-file", (_event, fileName: unknown) =>
+    openInternetSharedFile(fileName));
+
+  ipcMain.handle("internet:read-shared-file-chunk", (_event, input: {
+    handleId?: unknown; offset?: unknown; length?: unknown;
+  }) => readInternetSharedFileChunk(input ?? {}));
+
+  ipcMain.handle("internet:close-shared-file", (_event, handleId: unknown) =>
+    closeInternetSharedFile(handleId));
+
+  ipcMain.handle("internet:begin-receive", (_event, input: { fileName?: unknown; size?: unknown }) =>
+    beginInternetReceive(input ?? {}));
+
+  ipcMain.handle("internet:write-received-chunk", (_event, input: {
+    handleId?: unknown; offset?: unknown; chunk?: unknown;
+  }) => writeInternetReceiveChunk(input ?? {}));
+
+  ipcMain.handle("internet:complete-receive", (_event, input: { handleId?: unknown; sha256?: unknown }) =>
+    completeInternetReceive(input ?? {}));
+
+  ipcMain.handle("internet:abort-receive", (_event, handleId: unknown) =>
+    abortInternetReceive(handleId));
+
   ipcMain.handle("transfer:resume", async (_event, input: { taskId?: unknown; peerIds?: unknown }) => {
     requireBackendReady();
     if (!resumableDirectory) {
@@ -413,8 +677,8 @@ function registerIpcHandlers(): void {
 function installContentSecurityPolicy(): void {
   const development = !app.isPackaged;
   const connectSources = development
-    ? "connect-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173;"
-    : "connect-src 'self';";
+    ? "connect-src 'self' http://127.0.0.1:5173 ws://127.0.0.1:5173 https:;"
+    : "connect-src 'self' https:;";
   const scriptSources = development
     ? "script-src 'self' 'unsafe-eval' 'unsafe-inline';"
     : "script-src 'self';";
@@ -556,7 +820,9 @@ app.on("before-quit", (event) => {
   }
   event.preventDefault();
   isQuitting = true;
-  void bridge.shutdown(25_000).finally(() => app.exit(0));
+  void cleanupInternetFileHandles()
+    .catch((error: unknown) => console.error("[Electron] Could not clean up Internet transfers:", error))
+    .finally(() => bridge.shutdown(25_000).finally(() => app.exit(0)));
 });
 
 process.on("SIGINT", () => app.quit());

@@ -171,3 +171,35 @@ td { padding: 11px 8px; border-bottom: 1px solid rgba(42, 54, 80, 0.65); color: 
   .topbar { padding-left: 22px; padding-right: 22px; }
   .hero-grid, .content-grid { grid-template-columns: 1fr; }
 }
+
+/* Internet peer session */
+.internet-panel { display: flex; flex-direction: column; gap: 14px; }
+.internet-panel .panel-heading { margin-bottom: 0; }
+.internet-field { display: flex; flex-direction: column; gap: 8px; color: #95a3bd; font-size: 11px; font-weight: 600; }
+.internet-field textarea {
+  width: 100%; min-height: 70px; resize: vertical; border: 1px solid #2b3852;
+  border-radius: 9px; padding: 10px 12px; color: #dce7fb; background: #0c1426;
+  font: 10px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere;
+}
+.internet-field textarea:focus { outline: none; border-color: #5485e7; box-shadow: 0 0 0 3px rgba(84, 133, 231, 0.15); }
+.internet-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.internet-identity, .internet-incoming {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px;
+  padding: 15px; border: 1px solid #2b3d5d; border-radius: 11px; background: #0d182b;
+}
+.internet-identity > div:first-child { display: flex; flex-direction: column; gap: 8px; }
+.internet-identity strong { color: #b5d0ff; font: 700 27px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0.12em; }
+.internet-confirm-state { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; color: #9aa9c2; font-size: 10px; }
+.internet-file-tools { border-top: 1px solid #26334c; padding-top: 16px; }
+.internet-file-tools .panel-heading { margin-bottom: 10px; }
+.internet-file-list { display: flex; flex-direction: column; }
+.internet-file-list .file-row { min-height: 46px; }
+.internet-file-list .file-name { flex: 1; }
+.internet-incoming { align-items: flex-start; flex-direction: column; }
+.internet-incoming strong { color: #e1e9f8; font-size: 12px; }
+.internet-incoming span, .internet-incoming code { color: #9aa9c2; font-size: 10px; overflow-wrap: anywhere; }
+.internet-incoming code { user-select: text; }
+@media (max-width: 720px) {
+  .internet-identity { align-items: stretch; flex-direction: column; }
+  .internet-confirm-state { align-items: stretch; }
+}

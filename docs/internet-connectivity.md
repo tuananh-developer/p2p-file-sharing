@@ -15,15 +15,20 @@ This is separate from the existing Java TCP listener. STUN discovers candidate a
 ## Current implementation status
 
 - [x] Server-side two-party room creation and join.
-- [x] Offer/answer/ICE-candidate signaling message transport.
+- [x] Offer/answer signaling through the rendezvous API.
 - [x] Short-lived TURN REST credential issuance.
 - [x] coturn/Caddy Docker deployment examples.
-- [ ] Desktop WebRTC ICE/DataChannel client.
-- [ ] File streaming with bounded buffers, backpressure, cancellation and SHA-256 verification.
-- [ ] Cross-network test matrix (LAN, mobile hotspot, school NAT, symmetric NAT, relay-only).
-- [ ] Authentication-string verification UX and persistent trusted WebRTC identity.
+- [x] Electron renderer WebRTC ICE negotiation using gathered SDP candidates.
+- [x] Reliable ordered DataChannel file streaming with a four-chunk acknowledgement window.
+- [x] File offers, recipient save dialog, cancellation and final SHA-256 verification.
+- [x] DTLS fingerprint-derived eight-digit safety code; both users must confirm the same code before file operations.
+- [ ] WebRTC interrupted-transfer resume. The existing TCP/LAN transfer resume remains available.
+- [ ] Production deployment with a real public DNS name, HTTPS certificate, VPS firewall and TURN certificate.
+- [ ] Manual end-to-end tests across independent networks, including school NAT, mobile hotspot, TURN-only and restrictive firewalls.
 
-The current desktop application still requires manual host/port for its Java TCP transport. This document describes the server foundation, not a claim that public-Internet file transfer is already available.
+The desktop now has the client-side WebRTC path, but public connectivity depends on deploying the signaling service at a reachable HTTPS hostname. Direct ICE can work with STUN where NAT permits it. Networks with symmetric or restrictive NAT require a reachable TURN relay. The sample public STUN fallback is best-effort, not a service-level guarantee.
+
+To create a connection, both users run the desktop app and exchange the temporary invite code through a separate channel. The Java backend provides the local peer ID; the TCP listener does not need to be started for an Internet-only session. The invite code contains a room bearer secret and must be treated like a password. The room expires after ten minutes. The recipient must accept each file and select a save location.
 
 ## Security requirements for the client
 
@@ -32,4 +37,4 @@ The current desktop application still requires manual host/port for its Java TCP
 - Treat room IDs as identifiers and room secrets as bearer credentials.
 - Enforce a human-verifiable authentication string from the two DTLS fingerprints before file transfer. A malicious signaling service can otherwise substitute SDP and perform a man-in-the-middle attack.
 - Keep the existing Java TLS mutual-authentication trust store for the current TCP/LAN transport; do not weaken it or add a plaintext fallback.
-- Apply file-size limits, data-channel backpressure, chunk sequencing, resume metadata and final SHA-256 checks to the DataChannel transfer protocol.
+- Apply file-size limits, a bounded four-chunk acknowledgement window, sequential chunk offsets, cancellation and final SHA-256 checks to the DataChannel transfer protocol. Resume metadata is not yet implemented for WebRTC.

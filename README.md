@@ -2,13 +2,14 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core hỗ trợ vòng đời peer, file catalog, tải file SHA-256, tải nhiều nguồn theo range và khôi phục download sau restart. Kết nối peer được bảo vệ bằng TLS 1.3 mutual authentication và ghim SHA-256 certificate fingerprint. Electron/React desktop shell cung cấp cấu hình mạng và quản lý danh sách peer được tin cậy.
+> **Trạng thái:** Java Core hỗ trợ P2P TCP/TLS cho LAN hoặc địa chỉ có thể truy cập trực tiếp, catalog file, tải nhiều nguồn theo range, SHA-256 và khôi phục download sau restart. Desktop còn có đường Internet WebRTC DataChannel: mời peer bằng room code, ICE/STUN, TURN fallback, xác minh mã bảo mật từ DTLS fingerprint và truyền file theo chunk có ACK + SHA-256. Public Internet yêu cầu triển khai signaling HTTPS; NAT nghiêm ngặt yêu cầu TURN. WebRTC resume và kiểm thử thực tế qua nhiều mạng vẫn chưa hoàn tất.
 
 ## Tech stack
 
 - Java 27
 - Gradle 9.8.2 (Gradle Wrapper)
-- TCP/IP sockets
+- TCP/IP sockets (LAN transport)
+- WebRTC DataChannels with ICE/STUN/TURN (Internet transport)
 - JSON Lines bridge (Jackson)
 - JUnit Jupiter
 - Desktop UI: Electron 45, React 19, TypeScript 6, Vite 8
@@ -216,6 +217,23 @@ See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection 
 - Auto address listens on all local IPv4 interfaces. When using Wi-Fi, VPN, Docker, or a VM bridge, select the address reachable by the other device. The remote IP and the allocated listening port still need to be entered in the Connect to peer form; peer discovery is not automatic.
 - Only share folders whose contents you are comfortable exposing to the devices you explicitly trust. TLS protects confidentiality and integrity in transit and authenticates pinned peers, but does not prevent denial-of-service or make a public listener safe. Prefer a trusted LAN or VM network and do not forward the peer port from your router to the public Internet.
 
+Before building a packaged desktop release, copy `.env.example` to `.env` and set `VITE_SIGNALING_URL` to the deployed public HTTPS signaling URL. During development, the URL can also be entered in the Internet Connectivity panel. Never put TURN shared secrets or other server credentials in the desktop `.env`; TURN credentials are minted by the server for each room.
+
+## Internet peer connectivity
+
+The desktop app includes a WebRTC DataChannel path for peers that cannot accept inbound TCP connections:
+
+1. Deploy the service in [infra/nat-traversal](infra/nat-traversal) on a public VPS with HTTPS and configure TURN for restrictive NATs.
+2. Start the local peer in both desktop apps.
+3. The first user creates an invite using the deployed signaling URL and shares the complete invite privately. It contains a short-lived room bearer secret.
+4. The second user pastes the invite and joins. Both apps negotiate ICE candidates; WebRTC attempts a direct path and uses TURN when available and needed.
+5. Compare the eight-digit DTLS safety code over a separate trusted channel. Both users must confirm before file operations are enabled.
+6. The sender chooses a file from the configured shared directory. The recipient accepts and selects a save path. Chunks are acknowledged in a bounded window and the received file is finalized only after SHA-256 verification.
+
+The signaling service relays only room metadata and SDP messages; file bytes travel over the WebRTC DataChannel, directly when ICE succeeds or through TURN when relay is needed. Invite codes are bearer secrets. Do not send them in public channels. The public STUN fallback is best-effort; a TURN deployment is required for networks where direct ICE cannot succeed. Internet transfers currently do not support resume after interruption.
+
+Deployment and security details: [docs/internet-connectivity.md](docs/internet-connectivity.md) and [infra/nat-traversal/README.md](infra/nat-traversal/README.md).
+
 ## Current MVP scope
 
 - [x] Start/stop peer listener with explicit bind address and port
@@ -235,3 +253,6 @@ See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection 
 - [x] Persistent resume after restart (FR-28)
 - [x] Session activity log for peer and transfer lifecycle (FR-29)
 - [ ] Verify desktop packaging on Fedora through a full manual multi-peer LAN test
+- [x] Add WebRTC signaling and DataChannel file streaming path for Internet peers
+- [ ] Run manual cross-network tests against a deployed public signaling/TURN service
+- [ ] Add resumable WebRTC transfers

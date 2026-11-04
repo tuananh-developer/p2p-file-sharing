@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type {
   BackendEvent,
   BackendStatusSnapshot,
@@ -12,6 +12,12 @@ import type {
   ResumableDownloadSnapshot,
   SecuritySnapshot
 } from "../../electron/shared/contracts";
+import {
+  InternetPeerSession,
+  type InternetIncomingFileOffer,
+  type InternetSessionSnapshot,
+  type InternetTransferProgress
+} from "./internetPeer";
 
 interface ActivityItem {
   id: string;
@@ -41,6 +47,20 @@ function App() {
   const [remotePort, setRemotePort] = useState("5002");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; message: string } | null>(null);
+  const [signalingUrl, setSignalingUrl] = useState(import.meta.env.VITE_SIGNALING_URL ?? "");
+  const [inviteInput, setInviteInput] = useState("");
+  const [internetState, setInternetState] = useState<InternetSessionSnapshot>({
+    status: "IDLE",
+    invite: null,
+    authenticationCode: null,
+    localConfirmed: false,
+    remoteConfirmed: false,
+    secure: false,
+    detail: "No Internet peer session."
+  });
+  const [incomingInternetFile, setIncomingInternetFile] = useState<InternetIncomingFileOffer | null>(null);
+  const [internetProgress, setInternetProgress] = useState<InternetTransferProgress | null>(null);
+  const internetSession = useRef<InternetPeerSession | null>(null);
 
   const addActivity = useCallback((message: string, level = "INFO", timestamp?: string, id?: string, category = "APPLICATION") => {
     const parsedTime = timestamp ? new Date(timestamp) : new Date();
@@ -392,6 +412,105 @@ function App() {
     });
   };
 
+  const createInternetSession = (): InternetPeerSession => {
+    if (!peer?.peerId) {
+      throw new Error("The local peer identity is not available. Check that the Java backend is ready.");
+    }
+    if (internetSession.current) {
+      throw new Error("Close the current Internet session before starting another one.");
+    }
+
+    const session = new InternetPeerSession(peer.peerId, {
+      openSharedFile: (fileName) => window.p2p.internet.openSharedFile(fileName),
+      readSharedFileChunk: (input) => window.p2p.internet.readSharedFileChunk(input),
+      closeSharedFile: (handleId) => window.p2p.internet.closeSharedFile(handleId),
+      beginReceive: (input) => window.p2p.internet.beginReceive(input),
+      writeReceivedChunk: (input) => window.p2p.internet.writeReceivedChunk(input),
+      completeReceive: (input) => window.p2p.internet.completeReceive(input),
+      abortReceive: (handleId) => window.p2p.internet.abortReceive(handleId)
+    }, {
+      onState: setInternetState,
+      onIncomingFile: setIncomingInternetFile,
+      onProgress: setInternetProgress,
+      onError: (message) => addActivity(message, "WARN", undefined, undefined, "INTERNET")
+    });
+    internetSession.current = session;
+    return session;
+  };
+
+  const handleCreateInternetInvite = () => {
+    void runAction("internet-create", async () => {
+      const session = createInternetSession();
+      const invite = await session.createInvite(signalingUrl);
+      setNotice({ kind: "success", message: "Invite created. Send the complete code to the other peer through a trusted channel." });
+    });
+  };
+
+  const handleJoinInternetInvite = () => {
+    void runAction("internet-join", async () => {
+      const session = createInternetSession();
+      await session.joinInvite(inviteInput);
+      setNotice({ kind: "success", message: "Joined the rendezvous room. Waiting for ICE connectivity." });
+    });
+  };
+
+  const handleConfirmInternetIdentity = () => {
+    void runAction("internet-confirm", async () => {
+      if (!internetSession.current) throw new Error("No Internet session is active.");
+      internetSession.current.confirmSafetyCode();
+      setNotice({ kind: "info", message: "Your side confirmed the safety code. File transfer unlocks after the other peer confirms too." });
+    });
+  };
+
+  const handleSendInternetFile = (fileName: string) => {
+    void runAction("internet-send-" + fileName, async () => {
+      if (!internetSession.current) throw new Error("No Internet session is active.");
+      await internetSession.current.sendFile(fileName);
+      setNotice({ kind: "success", message: "File offer sent to the remote peer." });
+    });
+  };
+
+  const handleAcceptInternetFile = () => {
+    void runAction("internet-accept-file", async () => {
+      if (!internetSession.current) throw new Error("No Internet session is active.");
+      await internetSession.current.acceptIncomingFile();
+      setNotice({ kind: "success", message: "Download destination selected. Receiving file." });
+    });
+  };
+
+  const handleRejectInternetFile = () => {
+    void runAction("internet-reject-file", async () => {
+      internetSession.current?.rejectIncomingFile();
+      setNotice({ kind: "info", message: "Incoming file offer rejected." });
+    });
+  };
+
+  const handleCancelInternetTransfer = () => {
+    void runAction("internet-cancel-transfer", async () => {
+      await internetSession.current?.cancelTransfer();
+      setNotice({ kind: "info", message: "Internet file transfer cancelled." });
+    });
+  };
+
+  const handleCloseInternetSession = () => {
+    void runAction("internet-close", async () => {
+      const session = internetSession.current;
+      internetSession.current = null;
+      await session?.close();
+      setInternetState({
+        status: "CLOSED",
+        invite: null,
+        authenticationCode: null,
+        localConfirmed: false,
+        remoteConfirmed: false,
+        secure: false,
+        detail: "Internet peer session closed."
+      });
+      setIncomingInternetFile(null);
+      setInternetProgress(null);
+    });
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -572,6 +691,186 @@ function App() {
                 <div className="empty-state compact">No trusted peers yet. Add the other device's verified fingerprint on both devices.</div>
               )}
             </div>
+          </article>
+        </section>
+
+        <section className="security-section">
+          <article className="panel internet-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">INTERNET CONNECTIVITY</span>
+                <h2>Connect without manual IP addresses</h2>
+              </div>
+              <span className={"state-chip " + (internetState.secure ? "state-running" : "state-idle")}>
+                {internetState.status}
+              </span>
+            </div>
+
+            <p className="security-guidance">
+              This uses the hosted signaling service and WebRTC ICE. Direct connections are preferred; a configured
+              TURN server is used when NAT/firewall rules prevent a direct path. Tailscale is not required by app users.
+            </p>
+
+            <label className="internet-field">
+              <span>Signaling HTTPS URL</span>
+              <input
+                value={signalingUrl}
+                onChange={(event) => setSignalingUrl(event.target.value)}
+                placeholder="https://signal.example.com"
+                disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"}
+              />
+            </label>
+
+            <div className="internet-actions">
+              <button
+                className="button button-primary"
+                onClick={handleCreateInternetInvite}
+                disabled={backend.status !== "READY" || !peer?.peerId ||
+                  !!internetSession.current || busy["internet-create"]}
+              >
+                {busy["internet-create"] ? "Creating…" : "Create invite"}
+              </button>
+              <span className="helper-text">Uses the local peer identity; the TCP listener does not need to be started. Invite codes contain a temporary room secret, so share privately.</span>
+            </div>
+
+            {internetState.invite && (
+              <label className="internet-field">
+                <span>Invite code · expires automatically</span>
+                <textarea
+                  rows={3}
+                  readOnly
+                  value={internetState.invite}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              </label>
+            )}
+
+            <label className="internet-field">
+              <span>Join using an invite code</span>
+              <textarea
+                rows={3}
+                value={inviteInput}
+                onChange={(event) => setInviteInput(event.target.value)}
+                placeholder="Paste the complete p2pfs1 invite code here"
+                disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"}
+              />
+            </label>
+            <div className="internet-actions">
+              <button
+                className="button button-secondary"
+                onClick={handleJoinInternetInvite}
+                disabled={backend.status !== "READY" || !peer?.peerId ||
+                  !inviteInput.trim() || !!internetSession.current || busy["internet-join"]}
+              >
+                {busy["internet-join"] ? "Joining…" : "Join peer"}
+              </button>
+              {internetSession.current && (
+                <button className="button button-danger" onClick={handleCloseInternetSession} disabled={busy["internet-close"]}>
+                  {busy["internet-close"] ? "Closing…" : "Close Internet session"}
+                </button>
+              )}
+              <span className="helper-text">{internetState.detail}</span>
+            </div>
+
+            {internetState.authenticationCode && (
+              <div className="internet-identity">
+                <div>
+                  <span className="security-label">Compare this safety code with the other person</span>
+                  <strong>{internetState.authenticationCode}</strong>
+                  <span className="helper-text">
+                    Confirm the same code over a separate trusted channel, such as a voice call. Do not confirm a code
+                    supplied only by the signaling connection.
+                  </span>
+                </div>
+                <div className="internet-confirm-state">
+                  <span>{internetState.localConfirmed ? "You: confirmed" : "You: not confirmed"}</span>
+                  <span>{internetState.remoteConfirmed ? "Peer: confirmed" : "Peer: waiting"}</span>
+                  <button
+                    className="button button-primary"
+                    onClick={handleConfirmInternetIdentity}
+                    disabled={internetState.localConfirmed || !internetState.authenticationCode}
+                  >
+                    Confirm matching code
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {internetState.secure && (
+              <div className="internet-file-tools">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">SECURE DATA CHANNEL</span>
+                    <h2>Send a shared file</h2>
+                  </div>
+                  <span className="state-chip state-running">Verified</span>
+                </div>
+                {localFiles.length === 0 ? (
+                  <div className="empty-state compact">Choose a shared directory and add files before sending.</div>
+                ) : (
+                  <div className="internet-file-list">
+                    {localFiles.map((file) => (
+                      <div className="file-row" key={file.fileName}>
+                        <span className="file-icon">▤</span>
+                        <span className="file-name">{file.fileName}</span>
+                        <span className="file-size">{formatBytes(file.size)}</span>
+                        <button
+                          className="button button-quiet button-small"
+                          onClick={() => handleSendInternetFile(file.fileName)}
+                          disabled={busy["internet-send-" + file.fileName] || (!!internetProgress && (internetProgress.status === "OFFERED" || internetProgress.status === "TRANSFERRING"))}
+                        >
+                          Send
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {incomingInternetFile && (
+              <div className="internet-incoming">
+                <strong>Incoming file offer</strong>
+                <span>{incomingInternetFile.fileName} · {formatBytes(incomingInternetFile.size)}</span>
+                <code>SHA-256: {incomingInternetFile.sha256}</code>
+                <div className="internet-actions">
+                  <button className="button button-primary" onClick={handleAcceptInternetFile} disabled={busy["internet-accept-file"]}>
+                    {busy["internet-accept-file"] ? "Preparing…" : "Accept and choose destination"}
+                  </button>
+                  <button className="button button-danger" onClick={handleRejectInternetFile}>Reject</button>
+                </div>
+              </div>
+            )}
+
+            {internetProgress && (
+              <div className="transfer-row">
+                <div className="transfer-topline">
+                  <div>
+                    <strong>{internetProgress.fileName}</strong>
+                    <span>{internetProgress.detail}</span>
+                  </div>
+                  <span className={"state-chip " + (internetProgress.status === "COMPLETED" ? "state-running" : "state-idle")}>
+                    {internetProgress.status}
+                  </span>
+                </div>
+                <div className="progress-track">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: (internetProgress.totalBytes > 0
+                        ? Math.min(100, internetProgress.transferredBytes / internetProgress.totalBytes * 100)
+                        : internetProgress.status === "COMPLETED" ? 100 : 0).toFixed(1) + "%"
+                    }}
+                  />
+                </div>
+                <div className="transfer-bottomline">
+                  <span>{formatBytes(internetProgress.transferredBytes)} / {formatBytes(internetProgress.totalBytes)}</span>
+                  {internetProgress.status !== "COMPLETED" && (
+                    <button className="text-button" onClick={handleCancelInternetTransfer}>Cancel</button>
+                  )}
+                </div>
+              </div>
+            )}
           </article>
         </section>
 
@@ -817,7 +1116,7 @@ function App() {
       </main>
 
       <footer className="footer">
-        <span>Java 27 · TCP P2P · JSON Lines</span>
+        <span>Java 27 · TCP/TLS LAN · WebRTC Internet · JSON Lines</span>
         <span>{connectedPeers.length} active connection(s)</span>
       </footer>
     </div>

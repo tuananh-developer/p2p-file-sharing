@@ -7,12 +7,14 @@ import {
 } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const PEER_ID_PATTERN = /^[0-9a-f-]{36}$/i;
+const PEER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MESSAGE_TYPES = new Set(["offer", "answer", "ice-candidate", "hangup"]);
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_PAYLOAD_BYTES = 48 * 1024;
-const MAX_ROOMS = 10_000;
+const MAX_ROOMS = 2_000;
 const MAX_MESSAGES_PER_ROOM = 512;
+const MAX_STORED_SIGNAL_BYTES = 64 * 1024 * 1024;
+const MAX_PEER_MESSAGES_PER_MINUTE = 240;
 const DEFAULT_ROOM_TTL_MS = 10 * 60 * 1000;
 const MAX_LONG_POLL_MS = 20_000;
 
@@ -98,6 +100,8 @@ function createRoomRecord(id, secret, peerId, now, ttlMs) {
     expiresAt: now + ttlMs,
     members: new Map([[peerId, { peerId, joinedAt: now }]]),
     messages: [],
+    messageBytes: 0,
+    messageTimestamps: new Map(),
     nextSequence: 1,
     pollers: new Map()
   };
@@ -119,8 +123,9 @@ export function createSignalingServer(options = {}) {
   const turnRealm = options.turnRealm ?? process.env.TURN_REALM ?? turnPublicHost;
   const turnPort = options.turnPort ?? Number(process.env.TURN_PORT ?? 3478);
   const turnTlsPort = options.turnTlsPort ?? Number(process.env.TURN_TLS_PORT ?? 5349);
-  const stunUrl = options.stunUrl ?? process.env.STUN_URL ?? "";
+  const stunUrl = options.stunUrl ?? process.env.STUN_URL ?? "stun:stun.l.google.com:19302";
   const rooms = new Map();
+  let storedSignalBytes = 0;
 
   function closePoller(room, peerId, status, body) {
     const poller = room.pollers.get(peerId);
@@ -134,6 +139,8 @@ export function createSignalingServer(options = {}) {
 
   function removeRoom(room, status = 410) {
     if (!rooms.delete(room.id)) return;
+    storedSignalBytes = Math.max(0, storedSignalBytes - room.messageBytes);
+    room.messageBytes = 0;
     for (const peerId of room.pollers.keys()) {
       closePoller(room, peerId, status, {
         error: { code: "ROOM_EXPIRED", message: "This rendezvous room has expired." }
@@ -168,10 +175,21 @@ export function createSignalingServer(options = {}) {
   }
 
   function appendMessage(room, message) {
+    const payloadBytes = Buffer.byteLength(JSON.stringify(message.payload ?? {}), "utf8");
+    if (storedSignalBytes + payloadBytes > MAX_STORED_SIGNAL_BYTES) {
+      throw new HttpError(503, "SIGNALING_CAPACITY_REACHED", "The signaling message buffer is temporarily full.");
+    }
     const stored = { sequence: room.nextSequence++, sentAt: now(), ...message };
+    Object.defineProperty(stored, "payloadBytes", { value: payloadBytes, enumerable: false });
     room.messages.push(stored);
-    if (room.messages.length > MAX_MESSAGES_PER_ROOM) {
-      room.messages.splice(0, room.messages.length - MAX_MESSAGES_PER_ROOM);
+    room.messageBytes += payloadBytes;
+    storedSignalBytes += payloadBytes;
+    while (room.messages.length > MAX_MESSAGES_PER_ROOM) {
+      const removed = room.messages.shift();
+      if (removed) {
+        room.messageBytes = Math.max(0, room.messageBytes - removed.payloadBytes);
+        storedSignalBytes = Math.max(0, storedSignalBytes - removed.payloadBytes);
+      }
     }
 
     const poller = room.pollers.get(stored.toPeerId);
@@ -238,8 +256,9 @@ export function createSignalingServer(options = {}) {
   }
 
   function getTurnCredentials(peerId) {
+    const iceServers = stunUrl ? [{ urls: stunUrl }] : [];
     if (!turnSharedSecret || !turnPublicHost) {
-      throw new HttpError(503, "TURN_NOT_CONFIGURED", "TURN credentials are not configured on this server.");
+      return { iceServers, turnAvailable: false, expiresAt: null };
     }
 
     const expiresAt = Math.floor(now() / 1000) + 10 * 60;
@@ -247,17 +266,23 @@ export function createSignalingServer(options = {}) {
     const credential = createHmac("sha1", turnSharedSecret)
       .update(username, "utf8")
       .digest("base64");
-    const urls = [
+    const turnUrls = [
       "turn:" + turnPublicHost + ":" + turnPort + "?transport=udp",
       "turn:" + turnPublicHost + ":" + turnPort + "?transport=tcp"
     ];
     if (turnTlsPort > 0) {
-      urls.push("turns:" + turnPublicHost + ":" + turnTlsPort + "?transport=tcp");
+      turnUrls.push("turns:" + turnPublicHost + ":" + turnTlsPort + "?transport=tcp");
     }
-    if (stunUrl) urls.unshift(stunUrl);
+    iceServers.push({
+      urls: turnUrls,
+      username,
+      credential,
+      credentialType: "password"
+    });
 
     return {
-      iceServers: [{ urls, username, credential, credentialType: "password" }],
+      iceServers,
+      turnAvailable: true,
       realm: turnRealm || turnPublicHost,
       expiresAt: expiresAt * 1000
     };
@@ -367,9 +392,20 @@ export function createSignalingServer(options = {}) {
         if (!body.payload || typeof body.payload !== "object" || Array.isArray(body.payload)) {
           throw new HttpError(400, "INVALID_PAYLOAD", "payload must be a JSON object.");
         }
-        if (Buffer.byteLength(JSON.stringify(body.payload), "utf8") > MAX_PAYLOAD_BYTES) {
+        const payloadBytes = Buffer.byteLength(JSON.stringify(body.payload), "utf8");
+        if (payloadBytes > MAX_PAYLOAD_BYTES) {
           throw new HttpError(413, "PAYLOAD_TOO_LARGE", "Signaling payload exceeds the 48 KiB limit.");
         }
+        const timestamp = now();
+        const recentMessages = room.messageTimestamps.get(peerId) ?? [];
+        while (recentMessages.length > 0 && recentMessages[0] <= timestamp - 60_000) {
+          recentMessages.shift();
+        }
+        if (recentMessages.length >= MAX_PEER_MESSAGES_PER_MINUTE) {
+          throw new HttpError(429, "MESSAGE_RATE_LIMITED", "This peer is sending signaling messages too quickly.");
+        }
+        recentMessages.push(timestamp);
+        room.messageTimestamps.set(peerId, recentMessages);
         const message = appendMessage(room, {
           fromPeerId: peerId,
           toPeerId: body.toPeerId,
