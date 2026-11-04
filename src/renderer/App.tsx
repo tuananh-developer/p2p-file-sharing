@@ -442,7 +442,6 @@ function App() {
     void runAction("internet-create", async () => {
       const session = createInternetSession();
       const invite = await session.createInvite(signalingUrl);
-      setInviteInput(invite);
       setNotice({ kind: "success", message: "Invite created. Send the complete code to the other peer through a trusted channel." });
     });
   };
@@ -818,7 +817,7 @@ function App() {
                         <button
                           className="button button-quiet button-small"
                           onClick={() => handleSendInternetFile(file.fileName)}
-                          disabled={busy["internet-send-" + file.fileName] || (!!internetProgress && internetProgress.status !== "COMPLETED")}
+                          disabled={busy["internet-send-" + file.fileName] || (!!internetProgress && (internetProgress.status === "OFFERED" || internetProgress.status === "TRANSFERRING"))}
                         >
                           Send
                         </button>
