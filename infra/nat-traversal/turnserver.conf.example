@@ -1,0 +1,30 @@
+# Copy this file to turnserver.conf and replace every placeholder.
+# The Docker Compose TURN service uses host networking on a Linux VPS.
+listening-port=3478
+tls-listening-port=5349
+realm=turn.example.com
+server-name=turn.example.com
+
+fingerprint
+use-auth-secret
+static-auth-secret=REPLACE_WITH_THE_SAME_TURN_SHARED_SECRET_FROM_DOT_ENV
+
+# Relay port range. Open this exact range in the VPS firewall/security group.
+min-port=49160
+max-port=49200
+
+# TLS is optional for clients that can use TURN/UDP or TURN/TCP.
+# For TURN/TLS, provide a certificate for turn.example.com.
+cert=/etc/coturn/certs/fullchain.pem
+pkey=/etc/coturn/certs/privkey.pem
+
+no-cli
+no-loopback-peers
+no-multicast-peers
+stale-nonce=600
+no-tlsv1
+no-tlsv1_1
+
+# If the VPS has a private interface behind a 1:1 public NAT, configure:
+# external-ip=PUBLIC_IPV4/PRIVATE_IPV4
+# Do not set external-ip when the public IPv4 is directly assigned to the host.

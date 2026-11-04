@@ -42,3 +42,8 @@ dist/
 release/
 coverage/
 .npm/
+
+# NAT traversal deployment secrets
+infra/nat-traversal/.env
+infra/nat-traversal/turnserver.conf
+infra/nat-traversal/certs/
