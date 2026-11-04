@@ -1,0 +1,57 @@
+services:
+  signaling:
+    build:
+      context: ./signaling
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      TURN_PUBLIC_HOST: \${TURN_PUBLIC_HOST:-}
+      TURN_REALM: \${TURN_REALM:-}
+      TURN_PORT: \${TURN_PORT:-3478}
+      TURN_TLS_PORT: \${TURN_TLS_PORT:-5349}
+      TURN_SHARED_SECRET: \${TURN_SHARED_SECRET:-}
+      STUN_URL: \${STUN_URL:-}
+    expose:
+      - "8080"
+    networks:
+      - signaling
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      SIGNALING_DOMAIN: \${SIGNALING_DOMAIN:?Set SIGNALING_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - signaling
+    networks:
+      - signaling
+
+  turn:
+    image: coturn/coturn:4.6.3
+    profiles:
+      - turn
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/etc/coturn/certs:ro
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --log-file=stdout
+
+networks:
+  signaling:
+
+volumes:
+  caddy_data:
+  caddy_config:

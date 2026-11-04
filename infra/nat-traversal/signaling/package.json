@@ -1,0 +1,14 @@
+{
+  "name": "p2p-signaling-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Short-lived rendezvous and WebRTC signaling service for P2P File Sharing",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test server.test.mjs"
+  }
+}
