@@ -75,6 +75,7 @@ interface Outgoing {
   offset: number;
   acked: number;
   pumping: boolean;
+  cancelled: boolean;
   endSent: boolean;
 }
 
@@ -520,6 +521,7 @@ export class InternetPeerSession {
       offset: 0,
       acked: 0,
       pumping: false,
+      cancelled: false,
       endSent: false
     };
     this.callbacks.onProgress({
@@ -585,6 +587,7 @@ export class InternetPeerSession {
   async cancelTransfer(): Promise<void> {
     if (this.outgoing) {
       const transfer = this.outgoing;
+      transfer.cancelled = true;
       this.outgoing = null;
       await this.files.closeSharedFile(transfer.handleId).catch(() => undefined);
       this.sendControl({ type: "file-cancel", transferId: transfer.id });
@@ -679,6 +682,7 @@ export class InternetPeerSession {
         {
           const transfer = this.outgoing;
           if (!transfer || transfer.id !== message.transferId) break;
+          transfer.cancelled = true;
           this.outgoing = null;
           await this.files.closeSharedFile(transfer.handleId).catch(() => undefined);
           this.callbacks.onProgress({
@@ -770,6 +774,7 @@ export class InternetPeerSession {
       case "file-cancel": {
         const outgoing = this.outgoing;
         if (outgoing && outgoing.id === message.transferId) {
+          outgoing.cancelled = true;
           await this.files.closeSharedFile(outgoing.handleId).catch(() => undefined);
           this.outgoing = null;
         }
@@ -792,13 +797,21 @@ export class InternetPeerSession {
     if (!transfer || !channel || channel.readyState !== "open" || transfer.pumping) return;
     transfer.pumping = true;
     try {
-      while (transfer.offset < transfer.size && transfer.offset - transfer.acked < WINDOW_BYTES) {
+      while (!transfer.cancelled && transfer.offset < transfer.size &&
+             transfer.offset - transfer.acked < WINDOW_BYTES) {
         const length = Math.min(CHUNK_BYTES, transfer.size - transfer.offset);
-        const chunk = await this.files.readSharedFileChunk({
-          handleId: transfer.handleId,
-          offset: transfer.offset,
-          length
-        });
+        let chunk: Uint8Array;
+        try {
+          chunk = await this.files.readSharedFileChunk({
+            handleId: transfer.handleId,
+            offset: transfer.offset,
+            length
+          });
+        } catch (error) {
+          if (transfer.cancelled) return;
+          throw error;
+        }
+        if (transfer.cancelled) return;
         if (chunk.byteLength !== length) throw new Error("Could not read a complete shared-file chunk.");
         channel.send(JSON.stringify({
           type: "file-chunk",
@@ -811,7 +824,8 @@ export class InternetPeerSession {
         channel.send(payload);
         transfer.offset += length;
       }
-      if (transfer.offset === transfer.size && transfer.acked === transfer.size && !transfer.endSent) {
+      if (!transfer.cancelled && transfer.offset === transfer.size &&
+          transfer.acked === transfer.size && !transfer.endSent) {
         transfer.endSent = true;
         this.sendControl({ type: "file-end", transferId: transfer.id });
       }
@@ -837,6 +851,7 @@ export class InternetPeerSession {
       await this.request("/v1/rooms/" + this.roomId + "/leave", { method: "POST" }).catch(() => undefined);
     }
     if (this.outgoing) {
+      this.outgoing.cancelled = true;
       await this.files.closeSharedFile(this.outgoing.handleId).catch(() => undefined);
       this.outgoing = null;
     }
