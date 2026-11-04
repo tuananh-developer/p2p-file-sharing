@@ -217,6 +217,8 @@ See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection 
 - Auto address listens on all local IPv4 interfaces. When using Wi-Fi, VPN, Docker, or a VM bridge, select the address reachable by the other device. The remote IP and the allocated listening port still need to be entered in the Connect to peer form; peer discovery is not automatic.
 - Only share folders whose contents you are comfortable exposing to the devices you explicitly trust. TLS protects confidentiality and integrity in transit and authenticates pinned peers, but does not prevent denial-of-service or make a public listener safe. Prefer a trusted LAN or VM network and do not forward the peer port from your router to the public Internet.
 
+Before building a packaged desktop release, copy `.env.example` to `.env` and set `VITE_SIGNALING_URL` to the deployed public HTTPS signaling URL. During development, the URL can also be entered in the Internet Connectivity panel. Never put TURN shared secrets or other server credentials in the desktop `.env`; TURN credentials are minted by the server for each room.
+
 ## Internet peer connectivity
 
 The desktop app includes a WebRTC DataChannel path for peers that cannot accept inbound TCP connections:
