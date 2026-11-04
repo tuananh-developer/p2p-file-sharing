@@ -28,7 +28,7 @@ This is separate from the existing Java TCP listener. STUN discovers candidate a
 
 The desktop now has the client-side WebRTC path, but public connectivity depends on deploying the signaling service at a reachable HTTPS hostname. Direct ICE can work with STUN where NAT permits it. Networks with symmetric or restrictive NAT require a reachable TURN relay. The sample public STUN fallback is best-effort, not a service-level guarantee.
 
-To create a connection, both users run the desktop app, start their local peer, and exchange the temporary invite code through a separate channel. The invite code contains a room bearer secret and must be treated like a password. The room expires after ten minutes. The recipient must accept each file and select a save location.
+To create a connection, both users run the desktop app and exchange the temporary invite code through a separate channel. The Java backend provides the local peer ID; the TCP listener does not need to be started for an Internet-only session. The invite code contains a room bearer secret and must be treated like a password. The room expires after ten minutes. The recipient must accept each file and select a save location.
 
 ## Security requirements for the client
 
