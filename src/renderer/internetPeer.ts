@@ -578,6 +578,7 @@ export class InternetPeerSession {
     if (!offer) return;
     this.incomingOffer = null;
     this.callbacks.onIncomingFile(null);
+    this.callbacks.onProgress(null);
     this.sendControl({ type: "file-reject", transferId: offer.transferId });
   }
 
