@@ -119,7 +119,7 @@ export function createSignalingServer(options = {}) {
   const turnRealm = options.turnRealm ?? process.env.TURN_REALM ?? turnPublicHost;
   const turnPort = options.turnPort ?? Number(process.env.TURN_PORT ?? 3478);
   const turnTlsPort = options.turnTlsPort ?? Number(process.env.TURN_TLS_PORT ?? 5349);
-  const stunUrl = options.stunUrl ?? process.env.STUN_URL ?? "";
+  const stunUrl = options.stunUrl ?? process.env.STUN_URL ?? "stun:stun.l.google.com:19302";
   const rooms = new Map();
 
   function closePoller(room, peerId, status, body) {
@@ -238,8 +238,9 @@ export function createSignalingServer(options = {}) {
   }
 
   function getTurnCredentials(peerId) {
+    const iceServers = stunUrl ? [{ urls: stunUrl }] : [];
     if (!turnSharedSecret || !turnPublicHost) {
-      throw new HttpError(503, "TURN_NOT_CONFIGURED", "TURN credentials are not configured on this server.");
+      return { iceServers, turnAvailable: false, expiresAt: null };
     }
 
     const expiresAt = Math.floor(now() / 1000) + 10 * 60;
@@ -247,17 +248,23 @@ export function createSignalingServer(options = {}) {
     const credential = createHmac("sha1", turnSharedSecret)
       .update(username, "utf8")
       .digest("base64");
-    const urls = [
+    const turnUrls = [
       "turn:" + turnPublicHost + ":" + turnPort + "?transport=udp",
       "turn:" + turnPublicHost + ":" + turnPort + "?transport=tcp"
     ];
     if (turnTlsPort > 0) {
-      urls.push("turns:" + turnPublicHost + ":" + turnTlsPort + "?transport=tcp");
+      turnUrls.push("turns:" + turnPublicHost + ":" + turnTlsPort + "?transport=tcp");
     }
-    if (stunUrl) urls.unshift(stunUrl);
+    iceServers.push({
+      urls: turnUrls,
+      username,
+      credential,
+      credentialType: "password"
+    });
 
     return {
-      iceServers: [{ urls, username, credential, credentialType: "password" }],
+      iceServers,
+      turnAvailable: true,
       realm: turnRealm || turnPublicHost,
       expiresAt: expiresAt * 1000
     };
