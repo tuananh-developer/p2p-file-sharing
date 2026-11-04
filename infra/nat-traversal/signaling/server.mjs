@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const PEER_ID_PATTERN = /^[0-9a-f-]{36}$/i;
+const PEER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MESSAGE_TYPES = new Set(["offer", "answer", "ice-candidate", "hangup"]);
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_PAYLOAD_BYTES = 48 * 1024;
