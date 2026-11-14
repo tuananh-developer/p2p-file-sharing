@@ -19,6 +19,8 @@ import {
   type InternetTransferProgress
 } from "./internetPeer";
 
+type DrivePage = "home" | "my-files" | "shared" | "devices" | "transfers" | "recent" | "security" | "settings";
+
 interface ActivityItem {
   id: string;
   message: string;
@@ -29,6 +31,8 @@ interface ActivityItem {
 
 function App() {
   const [backend, setBackend] = useState<BackendStatusSnapshot>({ status: "STARTING" });
+  const [activePage, setActivePage] = useState<DrivePage>("home");
+  const [fileLayout, setFileLayout] = useState<"list" | "grid">("list");
   const [peer, setPeer] = useState<PeerSnapshot | null>(null);
   const [peers, setPeers] = useState<RemotePeerSnapshot[]>([]);
   const [directory, setDirectory] = useState<SharedDirectorySnapshot | null>(null);
@@ -511,616 +515,151 @@ function App() {
     });
   };
 
+  const title = ({ home: "Home", "my-files": "My files", shared: "Shared with me", devices: "Devices", transfers: "Transfers", recent: "Recent", security: "Security", settings: "Settings" } as const)[activePage];
+  const activeTransferCount = transfers.filter((item) => !["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(item.status)).length;
+  const completedTransfers = transfers.filter((item) => item.status === "COMPLETED").length;
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">P2P</div>
-          <div>
-            <div className="brand-title">File Sharing</div>
-            <div className="brand-subtitle">Direct peer-to-peer transfers</div>
-          </div>
-        </div>
-        <div className="topbar-right">
-          <span className={"status-pill status-" + backend.status.toLowerCase()}>
-            <span className="status-dot" />
-            Java backend · {backend.status}
-          </span>
-          <button className="button button-quiet button-small" onClick={() => void refreshAll()} disabled={backend.status !== "READY" || busy.refresh}>
-            Refresh state
-          </button>
-        </div>
+    <div className="drive-app">
+      <header className="drive-topbar">
+        <button className="brand-lockup" type="button" onClick={() => setActivePage("home")} aria-label="P2P Drive home"><span className="drive-logo"><i /><i /><i /></span><span>P2P Drive</span></button>
+        <form className="global-search" onSubmit={(event) => { handleSearch(event); setActivePage("shared"); }}>
+          <Icon name="search" /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search files on connected devices" aria-label="Search files on connected devices" disabled={backend.status !== "READY"} />
+          {keyword && <button type="button" className="icon-button" onClick={() => setKeyword("")} aria-label="Clear search"><Icon name="x" /></button>}
+        </form>
+        <div className="top-actions"><span className={"backend-state " + backend.status.toLowerCase()}><i />{backend.status === "READY" ? "Desktop ready" : backend.status}</span><button className="icon-button" type="button" onClick={() => void refreshAll()} disabled={backend.status !== "READY"} title="Refresh"><Icon name="refresh" /></button><span className="avatar">P</span></div>
       </header>
 
-      {backend.status !== "READY" && (
-        <section className="backend-banner">
-          <div>
-            <strong>{backend.status === "STARTING" ? "Starting Java Core…" : "Java Core is unavailable"}</strong>
-            <p>{backend.error ?? "The desktop app is waiting for the JSON Lines bridge to report READY."}</p>
+      <div className="drive-layout">
+        <aside className="sidebar">
+          <button className="new-button" type="button" onClick={handleChooseDirectory} disabled={backend.status !== "READY" || !!busy["share-directory"]}><Icon name="plus" /><span>Add shared folder</span></button>
+          <nav className="nav-list" aria-label="Main navigation">
+            {([{id:"home",label:"Home",icon:"home"},{id:"my-files",label:"My files",icon:"folder"},{id:"shared",label:"Shared with me",icon:"users"},{id:"devices",label:"Devices",icon:"monitor"},{id:"transfers",label:"Transfers",icon:"transfer"},{id:"recent",label:"Recent",icon:"clock"}] as const).map((item) => <button key={item.id} className={"nav-item " + (activePage === item.id ? "active" : "")} type="button" onClick={() => setActivePage(item.id)}><Icon name={item.icon} /><span>{item.label}</span>{item.id === "my-files" && localFiles.length > 0 && <small>{localFiles.length}</small>}{item.id === "devices" && connectedPeers.length > 0 && <small>{connectedPeers.length}</small>}{item.id === "transfers" && activeTransferCount > 0 && <i className="nav-dot" />}</button>)}
+          </nav>
+          <div className="nav-separator" /><span className="nav-caption">PREFERENCES</span>
+          <nav className="nav-list"><button className={"nav-item " + (activePage === "security" ? "active" : "")} type="button" onClick={() => setActivePage("security")}><Icon name="shield" /><span>Security</span></button><button className={"nav-item " + (activePage === "settings" ? "active" : "")} type="button" onClick={() => setActivePage("settings")}><Icon name="settings" /><span>Settings</span></button></nav>
+          <div className="sidebar-spacer" />
+          <div className="folder-status"><div><Icon name="folder" /><strong>Shared folder</strong></div><p>{directory?.configured ? "Your folder is ready to share." : "Choose a folder to start sharing."}</p><button type="button" onClick={handleChooseDirectory} disabled={backend.status !== "READY"}>{directory?.configured ? "Change folder" : "Choose folder"}</button></div>
+          <div className="sidebar-foot"><i className={backend.status === "READY" ? "online" : ""} />Java Core · {backend.status}</div>
+        </aside>
+
+        <main className="workspace">
+          {backend.status !== "READY" && <div className="backend-banner"><Icon name="alert" /><div><strong>{backend.status === "STARTING" ? "Starting your desktop engine" : "Java Core is unavailable"}</strong><p>{backend.error ?? "Waiting for the local Java service to become ready."}</p></div>{backend.status === "FAILED" && <button className="button primary" onClick={handleRestartBackend} disabled={!!busy["backend-restart"]}>Try again</button>}</div>}
+          {notice && <div className={"toast " + notice.kind}><Icon name={notice.kind === "error" ? "alert" : notice.kind === "success" ? "check" : "info"} /><span>{notice.message}</span><button className="icon-button" type="button" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon name="x" /></button></div>}
+          <div className="page-heading"><div><div className="breadcrumb">P2P Drive <Icon name="chevron" /> <b>{title}</b></div><h1>{title}</h1><p>{activePage === "home" ? "Your files and peer connections, all in one place." : activePage === "my-files" ? "Manage the files you share from this device." : activePage === "shared" ? "Browse and download files from connected peers." : activePage === "devices" ? "Connect nearby devices or create a secure Internet session." : activePage === "transfers" ? "Track downloads and manage active transfers." : activePage === "recent" ? "A timeline of connection and transfer activity." : activePage === "security" ? "Manage the identities trusted by this device." : "Configure local networking and Internet connectivity."}</p></div>
+            <div className="page-actions">{activePage === "my-files" && <button className="button primary" onClick={handleChooseDirectory} disabled={backend.status !== "READY"}><Icon name="plus" />Choose folder</button>}{activePage === "transfers" && <button className="button secondary" onClick={handleFindResumable} disabled={backend.status !== "READY" || !!busy["transfer-resumable"]}><Icon name="refresh" />Find interrupted</button>}{activePage === "devices" && <span className="state-chip"><i className={connectedPeers.length ? "online" : ""} />{connectedPeers.length} connected</span>}</div>
           </div>
-          {backend.status === "FAILED" && (
-            <button className="button button-primary" onClick={handleRestartBackend} disabled={busy["backend-restart"]}>
-              {busy["backend-restart"] ? "Restarting…" : "Retry backend"}
-            </button>
-          )}
-        </section>
-      )}
 
-      {notice && (
-        <div className={"notice notice-" + notice.kind} role="status">
-          <span>{notice.message}</span>
-          <button aria-label="Dismiss notification" onClick={() => setNotice(null)}>×</button>
-        </div>
-      )}
+          {activePage === "home" && <div className="page-content">
+            <section className="welcome"><div><span className="kicker">YOUR PRIVATE FILE SPACE</span><h2>Everything you share,<br />in one place.</h2><p>Move files directly between your devices. No cloud storage required.</p><button className="button white" onClick={() => setActivePage("my-files")}><Icon name="folder" />Explore my files</button></div><div className="welcome-art"><span className="art-ring" /><span className="art-doc"><Icon name="file" /></span><span className="art-laptop"><Icon name="monitor" /></span><span className="art-spark" /></div></section>
+            <section className="stats-grid">
+              <button className="stat-card" onClick={() => setActivePage("my-files")}><span className="stat-icon blue"><Icon name="folder" /></span><span><b>{localFiles.length}</b><small>Shared files</small></span><Icon name="arrow" /></button>
+              <button className="stat-card" onClick={() => setActivePage("devices")}><span className="stat-icon green"><Icon name="monitor" /></span><span><b>{connectedPeers.length}</b><small>Connected devices</small></span><Icon name="arrow" /></button>
+              <button className="stat-card" onClick={() => setActivePage("transfers")}><span className="stat-icon yellow"><Icon name="transfer" /></span><span><b>{activeTransferCount}</b><small>Active transfers</small></span><Icon name="arrow" /></button>
+              <button className="stat-card" onClick={() => setActivePage("transfers")}><span className="stat-icon purple"><Icon name="check" /></span><span><b>{completedTransfers}</b><small>Completed downloads</small></span><Icon name="arrow" /></button>
+            </section>
+            <section className="two-column">
+              <article className="surface"><div className="surface-heading"><div><h2>Quick access</h2><p>Files shared from this device</p></div><button className="text-link" onClick={() => setActivePage("my-files")}>View all <Icon name="arrow" /></button></div>
+                {!directory?.configured ? <Empty icon="folder" title="Choose a folder to get started" detail="Files in this folder can be discovered by your trusted peers." action="Choose shared folder" onAction={handleChooseDirectory} /> : localFiles.length === 0 ? <Empty icon="file" title="No files in this folder yet" detail="Add files to your selected folder to share them." /> : <FileTable files={localFiles.slice(0,6)} onSend={handleSendInternetFile} canSend={internetState.secure} busy={busy} />}
+              </article>
+              <article className="surface"><div className="surface-heading"><div><h2>Recent activity</h2><p>What has happened on your device</p></div><button className="text-link" onClick={() => setActivePage("recent")}>See all <Icon name="arrow" /></button></div>
+                {activities.length === 0 ? <Empty icon="clock" title="No activity yet" detail="Connections and transfers will appear here." /> : <ActivityList activities={activities.slice(0,6)} />}
+              </article>
+            </section>
+            <section className="surface"><div className="surface-heading"><div><h2>Your devices</h2><p>Peers connected to this P2P network</p></div><button className="text-link" onClick={() => setActivePage("devices")}>Manage devices <Icon name="arrow" /></button></div>{connectedPeers.length === 0 ? <div className="empty-line"><Icon name="monitor" />No devices connected yet.<button className="text-link" onClick={() => setActivePage("devices")}>Connect a device</button></div> : <PeerList peers={connectedPeers} onDisconnect={handleDisconnect} busy={busy} />}</section>
+          </div>}
 
-      <main className="main-content">
-        <section className="hero-grid">
-          <article className="panel local-peer-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">LOCAL NODE</span>
-                <h1>Peer lifecycle</h1>
-              </div>
-              <span className={"state-chip " + (peer?.status === "RUNNING" ? "state-running" : "state-idle")}>
-                {peer?.status ?? "UNKNOWN"}
-              </span>
-            </div>
+          {activePage === "my-files" && <div className="page-content">
+            <section className="location-bar"><div><Icon name="folder" /><span><b>Shared folder</b><small>{directory?.path ?? "No folder selected"}</small></span></div><div className="view-actions"><small>{localFiles.length} item(s)</small><button className={fileLayout === "list" ? "view-active" : ""} onClick={() => setFileLayout("list")} title="List view"><Icon name="list" /></button><button className={fileLayout === "grid" ? "view-active" : ""} onClick={() => setFileLayout("grid")} title="Grid view"><Icon name="grid" /></button></div></section>
+            {!directory?.configured ? <Empty icon="folder" title="Your shared folder is waiting" detail="Choose a local folder. P2P Drive will make its top-level files available to connected devices." action="Choose a folder" onAction={handleChooseDirectory} /> : localFiles.length === 0 ? <Empty icon="file" title="This folder is empty" detail="Add files to the folder on your computer." /> : fileLayout === "grid" ? <div className="file-grid">{localFiles.map((file) => <div className="file-tile" key={file.fileName}><FileTypeIcon name={file.fileName} large /><b title={file.fileName}>{file.fileName}</b><small>{formatBytes(file.size)}</small></div>)}</div> : <section className="surface file-browser"><FileTable files={localFiles} onSend={handleSendInternetFile} canSend={internetState.secure} busy={busy} /></section>}
+            {directory?.configured && <p className="footnote"><Icon name="shield" />Only files inside this selected folder are exposed to peers. Files elsewhere remain untouched.</p>}
+          </div>}
 
-            <form className="form-grid" onSubmit={handleStartPeer}>
-              <label>
-                <span>Bind address (0.0.0.0 = Auto)</span>
-                <input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="0.0.0.0 or a local IP" disabled={backend.status !== "READY"} />
-              </label>
-              <label>
-                <span>Listening port (0 = Auto)</span>
-                <input type="number" min="0" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} />
-              </label>
-              <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || busy["peer-start"]}>
-                  {busy["peer-start"] ? "Starting…" : "Start peer"}
-                </button>
-                <button className="button button-danger" type="button" onClick={handleStopPeer} disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-stop"]}>
-                  {busy["peer-stop"] ? "Stopping…" : "Stop peer"}
-                </button>
-                <span className="helper-text">Port 0 = Auto. Address 0.0.0.0 listens on all active IPv4 interfaces; enter one local IP to restrict it.</span>
-              </div>
-            </form>
+          {activePage === "shared" && <div className="page-content"><section className="surface"><div className="surface-heading"><div><h2>Find files on your network</h2><p>Search connected peers for a file by name.</p></div><span className="count-chip">{searchResults.length} results</span></div><form className="search-in-page" onSubmit={handleSearch}><Icon name="search" /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Try a file name, for example report.pdf" disabled={backend.status !== "READY"} /><button className="button primary" type="submit" disabled={backend.status !== "READY" || connectedPeers.length === 0 || !!busy["file-search"]}>{busy["file-search"] ? "Searching…" : "Search devices"}</button></form>
+            {searchErrors.length > 0 && <div className="inline-warning">{searchErrors.length} peer(s) could not be refreshed. Available results are still shown.</div>}
+            {connectedPeers.length === 0 && <div className="empty-line"><Icon name="monitor" />Connect to a device before searching its files.<button className="text-link" onClick={() => setActivePage("devices")}>Go to devices</button></div>}
+            {searchResults.length === 0 ? <Empty icon="search" title="No files to show yet" detail="Search connected devices to see files available for download." /> : <div className="remote-table"><div className="table-head"><span>Name</span><span>Device</span><span>Size</span><span>Actions</span></div>{searchResults.map((file) => <div className="table-row" key={file.peerId + ":" + file.fileName}><div className="file-cell"><FileTypeIcon name={file.fileName} /><span><b>{file.fileName}</b><small>Available from another device</small></span></div><span className="peer-address">{file.host}:{file.port}</span><small>{formatBytes(file.size)}</small><div className="row-actions"><button className="button primary small" onClick={() => handleDownload(file)} disabled={backend.status !== "READY" || !!busy["download-" + file.fileName]}><Icon name="download" />{matchingSourceIds(file).length > 1 ? "Multi-source" : "Download"}</button>{matchingSourceIds(file).length > 1 && <button className="icon-button" title="This peer only" onClick={() => handleDownloadFromThisPeer(file)}><Icon name="more" /></button>}</div></div>)}</div>}
+          </section></div>}
 
-            <div className="local-peer-meta">
-              <span>Connect using</span>
-              <div className="local-address-list">
-                {peer?.status === "RUNNING" ? (
-                  peer.addresses.length > 0
-                    ? peer.addresses.map((address) => <code key={address}>{address}:{peer.port}</code>)
-                    : <span className="helper-text">No non-loopback IPv4 address detected. Choose a specific interface address or check network connectivity.</span>
-                ) : <code>Not started</code>}
-              </div>
-            </div>
-            <div className="local-peer-meta">
-              <span>Peer ID</span>
-              <code>{peer?.peerId ?? "Not started"}</code>
-            </div>
-          </article>
+          {activePage === "devices" && <div className="page-content">
+            <section className="two-column"><article className="surface"><div className="surface-heading"><div><h2>This device</h2><p>Manage your local peer listener.</p></div><span className={"state-chip " + (peer?.status === "RUNNING" ? "success" : "")}>{peer?.status ?? "UNKNOWN"}</span></div><form className="settings-form" onSubmit={handleStartPeer}><label>Bind address<input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="0.0.0.0" disabled={backend.status !== "READY"} /></label><label>Listening port<input type="number" min="0" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} /></label><small className="hint">Use port 0 to let the operating system choose an available port.</small><div className="row-actions"><button className="button primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || !!busy["peer-start"]}>{busy["peer-start"] ? "Starting…" : "Start peer"}</button><button className="button secondary" type="button" onClick={handleStopPeer} disabled={peer?.status !== "RUNNING" || !!busy["peer-stop"]}>Stop</button></div></form><div className="detail-line"><small>Peer identity</small><code>{peer?.peerId ?? "Not started"}</code></div><div className="detail-line"><small>Reachable addresses</small><div className="address-list">{peer?.status === "RUNNING" && peer.addresses.length > 0 ? peer.addresses.map((address) => <code key={address}>{address}:{peer.port}</code>) : <small>Start your peer to see addresses.</small>}</div></div></article>
+              <article className="surface" id="connect-device"><div className="surface-heading"><div><h2>Connect to a device</h2><p>Connect over a reachable LAN or VPN address.</p></div><span className="count-chip">{connectedPeers.length} online</span></div><form className="settings-form" onSubmit={handleConnect}><label>Host or IP address<input value={remoteHost} onChange={(event) => setRemoteHost(event.target.value)} placeholder="192.168.1.10" disabled={backend.status !== "READY"} /></label><label>Peer port<input type="number" min="1" max="65535" value={remotePort} onChange={(event) => setRemotePort(event.target.value)} disabled={backend.status !== "READY"} /></label><small className="hint">The other device must be running and reachable.</small><div className="row-actions"><button className="button primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || !!busy["peer-connect"]}>{busy["peer-connect"] ? "Connecting…" : "Connect"}</button></div></form></article></section>
+            <section className="surface"><div className="surface-heading"><div><h2>Connected devices</h2><p>Peers currently known to this device.</p></div><button className="button secondary small" onClick={() => void runAction("peer-refresh", async () => setPeers(await window.p2p.peer.list()))} disabled={backend.status !== "READY"}><Icon name="refresh" />Refresh</button></div>{peers.length === 0 ? <Empty icon="monitor" title="No devices connected" detail="Connect with a peer's IP address and port, or create an Internet invite below." /> : <PeerList peers={peers} onDisconnect={handleDisconnect} busy={busy} />}</section>
+            <section className="surface internet-card"><div className="surface-heading"><div><h2>Connect over the Internet</h2><p>Use a temporary invite when devices are on different networks.</p></div><span className={"state-chip " + (internetState.secure ? "success" : "")}>{internetState.status}</span></div><div className="info-strip"><Icon name="shield" />WebRTC encrypts the connection. Compare the safety code with the other person over a separate trusted channel before sharing files.</div><label className="field-full">Signaling HTTPS URL<input value={signalingUrl} onChange={(event) => setSignalingUrl(event.target.value)} placeholder="https://signal.example.com" disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"} /></label><div className="two-column invite-columns"><div className="invite-panel"><h3>Create an invite</h3><p>Generate a short-lived private code for the other device.</p><button className="button primary" onClick={handleCreateInternetInvite} disabled={backend.status !== "READY" || !peer?.peerId || !!internetSession.current || !!busy["internet-create"]}>{busy["internet-create"] ? "Creating…" : "Create invite"}</button>{internetState.invite && <label className="field-full">Private invite code<textarea rows={3} readOnly value={internetState.invite} onFocus={(event) => event.currentTarget.select()} /></label>}</div><div className="invite-panel"><h3>Join an invite</h3><p>Paste the complete code shared by the other person.</p><label className="field-full"><textarea rows={3} value={inviteInput} onChange={(event) => setInviteInput(event.target.value)} placeholder="Paste p2pfs1 invite code" disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"} /></label><button className="button secondary" onClick={handleJoinInternetInvite} disabled={backend.status !== "READY" || !peer?.peerId || !inviteInput.trim() || !!internetSession.current || !!busy["internet-join"]}>{busy["internet-join"] ? "Joining…" : "Join device"}</button></div></div><div className="session-footer"><span>{internetState.detail}</span>{internetSession.current && <button className="button secondary small" onClick={handleCloseInternetSession} disabled={!!busy["internet-close"]}>Close session</button>}</div>
+              {internetState.authenticationCode && <div className="safety-code"><div><small>VERIFY THE OTHER DEVICE</small><b>{internetState.authenticationCode}</b><p>Both people must confirm that this code matches.</p></div><div><span>{internetState.localConfirmed ? "You confirmed" : "Waiting for your confirmation"}</span><span>{internetState.remoteConfirmed ? "Peer confirmed" : "Waiting for peer"}</span><button className="button primary" onClick={handleConfirmInternetIdentity} disabled={internetState.localConfirmed || !internetState.authenticationCode}>Confirm code</button></div></div>}
+              {internetState.secure && <div className="secure-send"><div className="surface-heading"><div><h3>Files ready to send</h3><p>Only files from your configured shared folder are listed.</p></div><span className="state-chip success">Verified</span></div>{localFiles.length === 0 ? <div className="empty-line">Choose a shared folder and add files to send.</div> : localFiles.map((file) => <div className="table-row" key={file.fileName}><div className="file-cell"><FileTypeIcon name={file.fileName} /><b>{file.fileName}</b></div><small>{formatBytes(file.size)}</small><button className="button secondary small" onClick={() => handleSendInternetFile(file.fileName)} disabled={!!busy["internet-send-" + file.fileName] || (!!internetProgress && (internetProgress.status === "OFFERED" || internetProgress.status === "TRANSFERRING"))}>Send file</button></div>)}</div>}
+              {incomingInternetFile && <div className="incoming-offer"><Icon name="file" /><div><b>Incoming file: {incomingInternetFile.fileName}</b><small>{formatBytes(incomingInternetFile.size)} · SHA-256 verification required</small><code>{incomingInternetFile.sha256}</code></div><div className="row-actions"><button className="button primary small" onClick={handleAcceptInternetFile} disabled={!!busy["internet-accept-file"]}>Accept</button><button className="button secondary small" onClick={handleRejectInternetFile}>Decline</button></div></div>}
+              {internetProgress && <TransferProgressCard progress={internetProgress} onCancel={handleCancelInternetTransfer} />}
+            </section>
+          </div>}
 
-          <article className="panel connect-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">REMOTE NODE</span>
-                <h2>Connect to peer</h2>
-              </div>
-              <span className="metric">{connectedPeers.length} connected</span>
-            </div>
-            <form className="form-grid" onSubmit={handleConnect}>
-              <label>
-                <span>Host / IP address</span>
-                <input value={remoteHost} onChange={(event) => setRemoteHost(event.target.value)} placeholder="192.168.1.10" disabled={backend.status !== "READY"} />
-              </label>
-              <label>
-                <span>Remote port</span>
-                <input type="number" min="1" max="65535" value={remotePort} onChange={(event) => setRemotePort(event.target.value)} disabled={backend.status !== "READY"} />
-              </label>
-              <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-connect"]}>
-                  {busy["peer-connect"] ? "Connecting…" : "Connect"}
-                </button>
-                <span className="helper-text">Start your local peer before connecting.</span>
-              </div>
-            </form>
-          </article>
-        </section>
+          {activePage === "transfers" && <div className="page-content"><section className="stats-grid"><div className="stat-card"><span className="stat-icon blue"><Icon name="transfer" /></span><span><b>{transfers.length}</b><small>Total tasks</small></span></div><div className="stat-card"><span className="stat-icon green"><Icon name="activity" /></span><span><b>{activeTransferCount}</b><small>In progress</small></span></div><div className="stat-card"><span className="stat-icon purple"><Icon name="check" /></span><span><b>{completedTransfers}</b><small>Completed</small></span></div><div className="stat-card"><span className="stat-icon yellow"><Icon name="pause" /></span><span><b>{resumableDownloads.length}</b><small>Ready to resume</small></span></div></section>
+            <section className="surface"><div className="surface-heading"><div><h2>Download queue</h2><p>Transfers handled by your peer connections.</p></div><button className="button secondary small" onClick={() => void runAction("transfer-refresh", async () => setTransfers(await window.p2p.transfer.list()))} disabled={backend.status !== "READY"}><Icon name="refresh" />Refresh</button></div>
+              {transfers.length === 0 ? <Empty icon="download" title="No downloads yet" detail="Files you download from other devices will appear here." action="Browse shared files" onAction={() => setActivePage("shared")} /> : <div className="transfer-list">{transfers.map((transfer) => { const percent = transfer.totalBytes > 0 ? Math.min(100, transfer.receivedBytes / transfer.totalBytes * 100) : transfer.status === "COMPLETED" ? 100 : 0; const terminal = ["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(transfer.status); return <div className="transfer-row" key={transfer.taskId}><FileTypeIcon name={transfer.targetFileName || transfer.fileName} /><div className="transfer-main"><div className="transfer-top"><b>{transfer.targetFileName || transfer.fileName}</b><span className={"state-chip " + (transfer.status === "COMPLETED" ? "success" : "")}>{transfer.status}</span></div><small>{transfer.detail}</small><div className="progress-track"><div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} /></div><div className="transfer-meta"><span>{formatBytes(transfer.receivedBytes)} of {formatBytes(transfer.totalBytes)} · {percent.toFixed(1)}%</span>{!terminal && <button className="text-link danger" onClick={() => handleCancelTransfer(transfer.taskId)} disabled={!!busy["cancel-" + transfer.taskId]}>Cancel</button>}</div></div></div>; })}</div>}
+            </section>
+            {resumableDownloads.length > 0 && <section className="surface"><div className="surface-heading"><div><h2>Interrupted downloads</h2><p>Continue a verified partial transfer from a matching source.</p></div><span className="count-chip">{resumableDownloads.length} available</span></div>{resumableDownloads.map((item) => { const percent = item.totalBytes > 0 ? Math.min(100, item.receivedBytes / item.totalBytes * 100) : 0; return <div className="transfer-row" key={item.taskId}><FileTypeIcon name={item.targetFileName} /><div className="transfer-main"><div className="transfer-top"><b>{item.targetFileName}</b><span className="state-chip">Paused</span></div><small>{item.completedChunks}/{item.totalChunks} verified ranges saved</small><div className="progress-track"><div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} /></div><div className="transfer-meta"><span>{formatBytes(item.receivedBytes)} of {formatBytes(item.totalBytes)} · {percent.toFixed(1)}%</span><button className="text-link" onClick={() => handleResumeTransfer(item.taskId)} disabled={connectedPeers.length === 0 || !!busy["resume-" + item.taskId]}>Resume download</button></div></div></div>; })}</section>}
+            {internetProgress && <section className="surface"><div className="surface-heading"><div><h2>Internet transfer</h2><p>WebRTC DataChannel transfer progress.</p></div></div><TransferProgressCard progress={internetProgress} onCancel={handleCancelInternetTransfer} />{incomingInternetFile && <div className="incoming-offer"><Icon name="file" /><div><b>{incomingInternetFile.fileName}</b><small>{formatBytes(incomingInternetFile.size)} · Incoming file offer</small></div><div className="row-actions"><button className="button primary small" onClick={handleAcceptInternetFile}>Accept</button><button className="button secondary small" onClick={handleRejectInternetFile}>Decline</button></div></div>}</section>}
+          </div>}
 
-        <section className="security-section">
-          <article className="panel security-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">PEER SECURITY</span>
-                <h2>Encrypted and authenticated connections</h2>
-              </div>
-              <span className="state-chip state-running">TLS 1.3 · Mutual authentication</span>
-            </div>
+          {activePage === "recent" && <div className="page-content"><section className="surface"><div className="surface-heading"><div><h2>Activity timeline</h2><p>Events recorded by this desktop session.</p></div><button className="button secondary small" onClick={() => setActivities([])} disabled={activities.length === 0}>Clear history</button></div>{activities.length === 0 ? <Empty icon="clock" title="Nothing here yet" detail="Peer and transfer activity will show up as you use P2P Drive." /> : <ActivityList activities={activities} />}</section></div>}
 
-            <div className="security-fingerprint">
-              <span className="security-label">This device's SHA-256 certificate fingerprint</span>
-              <code>{security?.localFingerprint ?? "Loading local identity…"}</code>
-            </div>
+          {activePage === "security" && <div className="page-content"><section className="security-banner"><Icon name="shield" /><div><b>Your connections are protected</b><p>LAN peer sessions use TLS 1.3 mutual authentication. Only fingerprints you explicitly trust can connect.</p></div><span>TLS 1.3</span></section>
+            <section className="surface"><div className="surface-heading"><div><h2>This device identity</h2><p>Share this fingerprint over a separate trusted channel.</p></div><span className="count-chip">{security?.protocol ?? "Loading…"}</span></div><div className="fingerprint-box"><small>SHA-256 certificate fingerprint</small><code>{security?.localFingerprint ?? "Loading local identity…"}</code></div><p className="hint">Never trust a fingerprint received only through the same connection you are trying to authenticate.</p></section>
+            <section className="surface"><div className="surface-heading"><div><h2>Trusted devices</h2><p>Fingerprints that are allowed to authenticate to this device.</p></div><span className="count-chip">{security?.trustedFingerprints.length ?? 0} trusted</span></div><form className="trust-form" onSubmit={handleTrustFingerprint}><label>Device fingerprint<input value={trustedFingerprintInput} onChange={(event) => setTrustedFingerprintInput(event.target.value)} placeholder="AA:BB:CC:… (64 hexadecimal characters)" disabled={backend.status !== "READY"} autoComplete="off" spellCheck={false} /></label><button className="button primary" type="submit" disabled={backend.status !== "READY" || !!busy["security-trust"]}>{busy["security-trust"] ? "Adding…" : "Trust device"}</button></form>{security?.trustedFingerprints.length ? <div className="trusted-list">{security.trustedFingerprints.map((fingerprint) => <div className="trusted-row" key={fingerprint}><Icon name="monitor" /><code>{fingerprint}</code><button className="button secondary small" onClick={() => handleUntrustFingerprint(fingerprint)} disabled={!!busy["security-untrust-" + fingerprint]}>Revoke</button></div>)}</div> : <div className="empty-line"><Icon name="shield" />No trusted devices have been added.</div>}</section>
+            <div className="info-strip">Internet sessions also require both peers to compare and confirm the DTLS fingerprint-derived safety code.</div>
+          </div>}
 
-            <p className="security-guidance">
-              Exchange fingerprints with the other device through a separate trusted channel (for example, in person).
-              Add each other's fingerprint on both devices before connecting. Never trust a fingerprint received only
-              from the same network connection you are trying to authenticate.
-            </p>
-
-            <form className="security-trust-form" onSubmit={handleTrustFingerprint}>
-              <label>
-                <span>Other device's SHA-256 fingerprint</span>
-                <input
-                  value={trustedFingerprintInput}
-                  onChange={(event) => setTrustedFingerprintInput(event.target.value)}
-                  placeholder="AA:BB:CC:… (64 hexadecimal characters)"
-                  disabled={backend.status !== "READY"}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-              <button
-                className="button button-primary"
-                type="submit"
-                disabled={backend.status !== "READY" || busy["security-trust"]}
-              >
-                {busy["security-trust"] ? "Adding…" : "Trust fingerprint"}
-              </button>
-            </form>
-
-            <div className="trusted-peer-list">
-              <span className="security-label">Trusted peer fingerprints ({security?.trustedFingerprints.length ?? 0})</span>
-              {security && security.trustedFingerprints.length > 0 ? (
-                security.trustedFingerprints.map((fingerprint) => (
-                  <div className="trusted-peer-row" key={fingerprint}>
-                    <code>{fingerprint}</code>
-                    <button
-                      className="button button-quiet button-small"
-                      type="button"
-                      onClick={() => handleUntrustFingerprint(fingerprint)}
-                      disabled={busy["security-untrust-" + fingerprint]}
-                    >
-                      Revoke
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-state compact">No trusted peers yet. Add the other device's verified fingerprint on both devices.</div>
-              )}
-            </div>
-          </article>
-        </section>
-
-        <section className="security-section">
-          <article className="panel internet-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">INTERNET CONNECTIVITY</span>
-                <h2>Connect without manual IP addresses</h2>
-              </div>
-              <span className={"state-chip " + (internetState.secure ? "state-running" : "state-idle")}>
-                {internetState.status}
-              </span>
-            </div>
-
-            <p className="security-guidance">
-              This uses the hosted signaling service and WebRTC ICE. Direct connections are preferred; a configured
-              TURN server is used when NAT/firewall rules prevent a direct path. Tailscale is not required by app users.
-            </p>
-
-            <label className="internet-field">
-              <span>Signaling HTTPS URL</span>
-              <input
-                value={signalingUrl}
-                onChange={(event) => setSignalingUrl(event.target.value)}
-                placeholder="https://signal.example.com"
-                disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"}
-              />
-            </label>
-
-            <div className="internet-actions">
-              <button
-                className="button button-primary"
-                onClick={handleCreateInternetInvite}
-                disabled={backend.status !== "READY" || !peer?.peerId ||
-                  !!internetSession.current || busy["internet-create"]}
-              >
-                {busy["internet-create"] ? "Creating…" : "Create invite"}
-              </button>
-              <span className="helper-text">Uses the local peer identity; the TCP listener does not need to be started. Invite codes contain a temporary room secret, so share privately.</span>
-            </div>
-
-            {internetState.invite && (
-              <label className="internet-field">
-                <span>Invite code · expires automatically</span>
-                <textarea
-                  rows={3}
-                  readOnly
-                  value={internetState.invite}
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-              </label>
-            )}
-
-            <label className="internet-field">
-              <span>Join using an invite code</span>
-              <textarea
-                rows={3}
-                value={inviteInput}
-                onChange={(event) => setInviteInput(event.target.value)}
-                placeholder="Paste the complete p2pfs1 invite code here"
-                disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"}
-              />
-            </label>
-            <div className="internet-actions">
-              <button
-                className="button button-secondary"
-                onClick={handleJoinInternetInvite}
-                disabled={backend.status !== "READY" || !peer?.peerId ||
-                  !inviteInput.trim() || !!internetSession.current || busy["internet-join"]}
-              >
-                {busy["internet-join"] ? "Joining…" : "Join peer"}
-              </button>
-              {internetSession.current && (
-                <button className="button button-danger" onClick={handleCloseInternetSession} disabled={busy["internet-close"]}>
-                  {busy["internet-close"] ? "Closing…" : "Close Internet session"}
-                </button>
-              )}
-              <span className="helper-text">{internetState.detail}</span>
-            </div>
-
-            {internetState.authenticationCode && (
-              <div className="internet-identity">
-                <div>
-                  <span className="security-label">Compare this safety code with the other person</span>
-                  <strong>{internetState.authenticationCode}</strong>
-                  <span className="helper-text">
-                    Confirm the same code over a separate trusted channel, such as a voice call. Do not confirm a code
-                    supplied only by the signaling connection.
-                  </span>
-                </div>
-                <div className="internet-confirm-state">
-                  <span>{internetState.localConfirmed ? "You: confirmed" : "You: not confirmed"}</span>
-                  <span>{internetState.remoteConfirmed ? "Peer: confirmed" : "Peer: waiting"}</span>
-                  <button
-                    className="button button-primary"
-                    onClick={handleConfirmInternetIdentity}
-                    disabled={internetState.localConfirmed || !internetState.authenticationCode}
-                  >
-                    Confirm matching code
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {internetState.secure && (
-              <div className="internet-file-tools">
-                <div className="panel-heading">
-                  <div>
-                    <span className="eyebrow">SECURE DATA CHANNEL</span>
-                    <h2>Send a shared file</h2>
-                  </div>
-                  <span className="state-chip state-running">Verified</span>
-                </div>
-                {localFiles.length === 0 ? (
-                  <div className="empty-state compact">Choose a shared directory and add files before sending.</div>
-                ) : (
-                  <div className="internet-file-list">
-                    {localFiles.map((file) => (
-                      <div className="file-row" key={file.fileName}>
-                        <span className="file-icon">▤</span>
-                        <span className="file-name">{file.fileName}</span>
-                        <span className="file-size">{formatBytes(file.size)}</span>
-                        <button
-                          className="button button-quiet button-small"
-                          onClick={() => handleSendInternetFile(file.fileName)}
-                          disabled={busy["internet-send-" + file.fileName] || (!!internetProgress && (internetProgress.status === "OFFERED" || internetProgress.status === "TRANSFERRING"))}
-                        >
-                          Send
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {incomingInternetFile && (
-              <div className="internet-incoming">
-                <strong>Incoming file offer</strong>
-                <span>{incomingInternetFile.fileName} · {formatBytes(incomingInternetFile.size)}</span>
-                <code>SHA-256: {incomingInternetFile.sha256}</code>
-                <div className="internet-actions">
-                  <button className="button button-primary" onClick={handleAcceptInternetFile} disabled={busy["internet-accept-file"]}>
-                    {busy["internet-accept-file"] ? "Preparing…" : "Accept and choose destination"}
-                  </button>
-                  <button className="button button-danger" onClick={handleRejectInternetFile}>Reject</button>
-                </div>
-              </div>
-            )}
-
-            {internetProgress && (
-              <div className="transfer-row">
-                <div className="transfer-topline">
-                  <div>
-                    <strong>{internetProgress.fileName}</strong>
-                    <span>{internetProgress.detail}</span>
-                  </div>
-                  <span className={"state-chip " + (internetProgress.status === "COMPLETED" ? "state-running" : "state-idle")}>
-                    {internetProgress.status}
-                  </span>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: (internetProgress.totalBytes > 0
-                        ? Math.min(100, internetProgress.transferredBytes / internetProgress.totalBytes * 100)
-                        : internetProgress.status === "COMPLETED" ? 100 : 0).toFixed(1) + "%"
-                    }}
-                  />
-                </div>
-                <div className="transfer-bottomline">
-                  <span>{formatBytes(internetProgress.transferredBytes)} / {formatBytes(internetProgress.totalBytes)}</span>
-                  {internetProgress.status !== "COMPLETED" && (
-                    <button className="text-button" onClick={handleCancelInternetTransfer}>Cancel</button>
-                  )}
-                </div>
-              </div>
-            )}
-          </article>
-        </section>
-
-        <section className="content-grid">
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">PEER DIRECTORY</span>
-                <h2>Connected peers</h2>
-              </div>
-              <button className="button button-quiet button-small" onClick={() => void runAction("peer-refresh", async () => setPeers(await window.p2p.peer.list()))} disabled={backend.status !== "READY"}>
-                Refresh
-              </button>
-            </div>
-
-            {peers.length === 0 ? (
-              <div className="empty-state">No peers have been discovered yet. Connect to a peer by IP address and port.</div>
-            ) : (
-              <div className="peer-list">
-                {peers.map((item) => (
-                  <div className="peer-row" key={item.peerId}>
-                    <div className="peer-avatar">{item.host.slice(0, 1).toUpperCase()}</div>
-                    <div className="peer-main">
-                      <strong>{item.host}:{item.port}</strong>
-                      <code>{item.peerId}</code>
-                    </div>
-                    <span className={"state-chip " + (item.status === "CONNECTED" ? "state-running" : "state-idle")}>{item.status}</span>
-                    <button className="button button-quiet button-small" onClick={() => handleDisconnect(item.peerId)} disabled={item.status !== "CONNECTED" || busy["peer-disconnect-" + item.peerId]}>
-                      Disconnect
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
-
-          <article className="panel share-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">LOCAL STORAGE</span>
-                <h2>Shared directory</h2>
-              </div>
-              <button className="button button-secondary button-small" onClick={handleChooseDirectory} disabled={backend.status !== "READY" || busy["share-directory"]}>
-                {busy["share-directory"] ? "Opening…" : "Choose folder"}
-              </button>
-            </div>
-            <div className="directory-path">
-              <span className="folder-icon">▰</span>
-              <span>{directory?.path ?? "No directory selected"}</span>
-            </div>
-            <div className="section-caption">{localFiles.length} local file(s) available to connected peers</div>
-            {localFiles.length === 0 ? (
-              <div className="empty-state compact">Choose a folder with files to share. Only supported top-level regular files are listed.</div>
-            ) : (
-              <div className="file-list">
-                {localFiles.slice(0, 8).map((file) => (
-                  <div className="file-row" key={file.fileName}>
-                    <span className="file-icon">▤</span>
-                    <span className="file-name">{file.fileName}</span>
-                    <span className="file-size">{formatBytes(file.size)}</span>
-                  </div>
-                ))}
-                {localFiles.length > 8 && <div className="more-row">+ {localFiles.length - 8} more file(s)</div>}
-              </div>
-            )}
-          </article>
-
-          <article className="panel search-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">REMOTE CATALOG</span>
-                <h2>Find files</h2>
-              </div>
-              <span className="metric">{searchResults.length} result(s)</span>
-            </div>
-            <form className="search-form" onSubmit={handleSearch}>
-              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search by file name…" disabled={backend.status !== "READY"} />
-              <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["file-search"]}>
-                {busy["file-search"] ? "Searching…" : "Search"}
-              </button>
-            </form>
-            {searchErrors.length > 0 && (
-              <div className="inline-warning">
-                {searchErrors.length} peer(s) could not be refreshed. Successful results are still shown.
-              </div>
-            )}
-            {searchResults.length === 0 ? (
-              <div className="empty-state compact">Search connected peers to browse files available for download.</div>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>File</th><th>Source peer</th><th>Size</th><th /></tr>
-                  </thead>
-                  <tbody>
-                    {searchResults.map((file) => (
-                      <tr key={file.peerId + ":" + file.fileName}>
-                        <td className="file-name-cell">{file.fileName}</td>
-                        <td><span className="source-address">{file.host}:{file.port}</span></td>
-                        <td className="file-size">{formatBytes(file.size)}</td>
-                        <td className="action-cell">
-                          <button
-                            className="button button-secondary button-small"
-                            onClick={() => handleDownload(file)}
-                            disabled={backend.status !== "READY" || busy["download-" + file.fileName]}
-                          >
-                            {matchingSourceIds(file).length > 1
-                              ? "Multi-source (" + matchingSourceIds(file).length + ")"
-                              : "Download"}
-                          </button>
-                          {matchingSourceIds(file).length > 1 && (
-                            <button
-                              className="button button-quiet button-small"
-                              onClick={() => handleDownloadFromThisPeer(file)}
-                              disabled={backend.status !== "READY" || busy["download-single-" + file.peerId + "-" + file.fileName]}
-                            >
-                              This peer only
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
-
-          <article className="panel transfer-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">TRANSFER QUEUE</span>
-                <h2>Downloads</h2>
-              </div>
-              <div className="form-actions">
-                <button className="button button-quiet button-small" onClick={handleFindResumable} disabled={backend.status !== "READY" || busy["transfer-resumable"]}>
-                  Find interrupted
-                </button>
-                <button className="button button-quiet button-small" onClick={() => void runAction("transfer-refresh", async () => setTransfers(await window.p2p.transfer.list()))} disabled={backend.status !== "READY"}>
-                  Refresh
-                </button>
-              </div>
-            </div>
-            {transfers.length === 0 ? (
-              <div className="empty-state compact">Download tasks and their progress will appear here.</div>
-            ) : (
-              <div className="transfer-list">
-                {transfers.map((transfer) => {
-                  const percent = transfer.totalBytes > 0
-                    ? Math.min(100, transfer.receivedBytes / transfer.totalBytes * 100)
-                    : transfer.status === "COMPLETED" ? 100 : 0;
-                  const terminal = ["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(transfer.status);
-                  return (
-                    <div className="transfer-row" key={transfer.taskId}>
-                      <div className="transfer-topline">
-                        <div>
-                          <strong>{transfer.targetFileName || transfer.fileName}</strong>
-                          <span>{transfer.detail}</span>
-                          {transfer.sourcePeerIds && transfer.sourcePeerIds.length > 0 && (
-                            <span>{transfer.sourcePeerIds.length} source peer(s)
-                              {typeof transfer.totalChunks === "number" && transfer.totalChunks > 0
-                                ? " · " + (transfer.completedChunks ?? 0) + "/" + transfer.totalChunks + " ranges"
-                                : ""}
-                            </span>
-                          )}
-                        </div>
-                        <span className={"state-chip " + (transfer.status === "COMPLETED" ? "state-running" : "state-idle")}>
-                          {transfer.status}
-                        </span>
-                      </div>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} />
-                      </div>
-                      <div className="transfer-bottomline">
-                        <span>{formatBytes(transfer.receivedBytes)} / {formatBytes(transfer.totalBytes)} · {percent.toFixed(1)}%</span>
-                        {!terminal && (
-                          <button className="text-button" onClick={() => handleCancelTransfer(transfer.taskId)} disabled={busy["cancel-" + transfer.taskId]}>
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {resumableDownloads.length > 0 && (
-              <div className="transfer-list resumable-list">
-                <div className="eyebrow">INTERRUPTED DOWNLOADS</div>
-                {resumableDownloads.map((item) => {
-                  const percent = item.totalBytes > 0
-                    ? Math.min(100, item.receivedBytes / item.totalBytes * 100)
-                    : 0;
-                  return (
-                    <div className="transfer-row" key={item.taskId}>
-                      <div className="transfer-topline">
-                        <div>
-                          <strong>{item.targetFileName}</strong>
-                          <span>{item.completedChunks}/{item.totalChunks} verified ranges saved</span>
-                        </div>
-                        <span className="state-chip state-idle">PAUSED</span>
-                      </div>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} />
-                      </div>
-                      <div className="transfer-bottomline">
-                        <span>{formatBytes(item.receivedBytes)} / {formatBytes(item.totalBytes)} · {percent.toFixed(1)}%</span>
-                        <button className="text-button" onClick={() => handleResumeTransfer(item.taskId)}
-                          disabled={connectedPeers.length === 0 || busy["resume-" + item.taskId]}>
-                          Resume
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-
-          <article className="panel activity-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">SYSTEM EVENTS</span>
-                <h2>Recent activity</h2>
-              </div>
-              <button className="button button-quiet button-small" onClick={() => setActivities([])}>Clear visible</button>
-            </div>
-            {activities.length === 0 ? (
-              <div className="empty-state compact">Connection, transfer and backend events will be recorded here.</div>
-            ) : (
-              <div className="activity-list">
-                {activities.map((activity) => (
-                  <div className="activity-row" key={activity.id}>
-                    <span className={"activity-dot level-" + activity.level.toLowerCase()} />
-                    <span className="activity-message"><span className="activity-category">{activity.category}</span>{activity.message}</span>
-                    <time>{activity.time}</time>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
-        </section>
-      </main>
-
-      <footer className="footer">
-        <span>Java 27 · TCP/TLS LAN · WebRTC Internet · JSON Lines</span>
-        <span>{connectedPeers.length} active connection(s)</span>
-      </footer>
+          {activePage === "settings" && <div className="page-content"><section className="surface"><div className="surface-heading"><div><h2>Local peer network</h2><p>Configure how this device listens for direct connections.</p></div><span className={"state-chip " + (peer?.status === "RUNNING" ? "success" : "")}>{peer?.status ?? "UNKNOWN"}</span></div><form className="settings-form" onSubmit={handleStartPeer}><label>Bind address<input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="0.0.0.0" disabled={backend.status !== "READY"} /></label><label>Listening port<input type="number" min="0" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} /></label><small className="hint">Use port 0 for automatic port allocation.</small><div className="row-actions"><button className="button primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || !!busy["peer-start"]}>Start peer</button><button className="button secondary" type="button" onClick={handleStopPeer} disabled={peer?.status !== "RUNNING" || !!busy["peer-stop"]}>Stop</button></div></form></section>
+            <section className="surface"><div className="surface-heading"><div><h2>Internet connectivity</h2><p>HTTPS rendezvous service used by WebRTC.</p></div><span className="count-chip">WebRTC / ICE / TURN</span></div><label className="field-full">Signaling HTTPS URL<input value={signalingUrl} onChange={(event) => setSignalingUrl(event.target.value)} placeholder="https://signal.example.com" disabled={internetState.status !== "IDLE" && internetState.status !== "CLOSED" && internetState.status !== "FAILED"} /></label><p className="hint">Do not put TURN shared secrets or server credentials in this field.</p><div className="detail-line"><small>Current session</small><span>{internetState.detail}</span></div><button className="button secondary small" onClick={() => setActivePage("devices")}>Manage Internet session</button></section>
+            <section className="surface"><div className="surface-heading"><div><h2>Desktop engine</h2><p>Local Java process and bridge status.</p></div><span className={"state-chip " + (backend.status === "READY" ? "success" : "")}>{backend.status}</span></div><div className="detail-line"><small>Java P2P Core</small><span>{backend.error ?? "JSON Lines bridge is available."}</span></div><div className="detail-line"><small>Shared directory</small><span>{directory?.path ?? "No directory selected"}</span></div>{backend.status === "FAILED" && <button className="button primary" onClick={handleRestartBackend} disabled={!!busy["backend-restart"]}>Restart backend</button>}</section>
+          </div>}
+          <footer className="workspace-footer"><span>P2P Drive · Files move directly between your devices</span><span>Java 27 <i /> TCP/TLS <i /> WebRTC</span></footer>
+        </main>
+      </div>
     </div>
   );
+}
+
+function Icon({ name }: { name: string }) {
+  const glyphs: Record<string, string> = {
+    search: "⌕", x: "×", refresh: "↻", plus: "+", home: "⌂", folder: "▱", users: "♧",
+    monitor: "▣", transfer: "⇄", clock: "◷", shield: "◇", settings: "⚙", alert: "!",
+    check: "✓", info: "i", chevron: "›", arrow: "↗", file: "▤", download: "↓",
+    activity: "⌁", pause: "Ⅱ", list: "☷", grid: "▦", more: "⋮"
+  };
+  return <span className="ui-glyph" aria-hidden="true">{glyphs[name] ?? "•"}</span>;
+}
+
+function FileTypeIcon({ name, large = false }: { name: string; large?: boolean }) {
+  const lower = name.toLowerCase();
+  const kind = /\.(png|jpe?g|gif|webp|svg|heic)$/.test(lower) ? "image"
+    : /\.(zip|7z|rar|tar|gz)$/.test(lower) ? "archive"
+    : /\.(xls|xlsx|csv)$/.test(lower) ? "sheet"
+    : /\.(ppt|pptx)$/.test(lower) ? "slide"
+    : /\.(js|jsx|ts|tsx|java|kt|py|json|html|css|xml)$/.test(lower) ? "code" : "document";
+  const mark = kind === "image" ? "▧" : kind === "sheet" ? "▦" : kind === "code" ? "{ }" : kind === "archive" ? "▤" : kind === "slide" ? "▥" : "▤";
+  return <span className={"file-type " + kind + (large ? " large" : "")}>{mark}</span>;
+}
+
+function Empty({ icon, title, detail, action, onAction }: { icon: string; title: string; detail: string; action?: string; onAction?: () => void }) {
+  return <div className="empty-state"><span className="empty-icon"><Icon name={icon} /></span><b>{title}</b><p>{detail}</p>{action && onAction && <button className="button primary" onClick={onAction}>{action}</button>}</div>;
+}
+
+function FileTable({ files, onSend, canSend, busy }: { files: SharedFileSnapshot[]; onSend: (fileName: string) => void; canSend: boolean; busy: Record<string, boolean> }) {
+  return <div className="file-table"><div className="table-head"><span>Name</span><span>Size</span><span>Availability</span><span>Actions</span></div>{files.map((file) => <div className="table-row" key={file.fileName}><div className="file-cell"><FileTypeIcon name={file.fileName} /><span><b title={file.fileName}>{file.fileName}</b><small>Local shared file</small></span></div><small>{formatBytes(file.size)}</small><small className="shared-label"><i />Shared</small><div className="row-actions">{canSend && <button className="button secondary small" onClick={() => onSend(file.fileName)} disabled={!!busy["internet-send-" + file.fileName]}>Send</button>}</div></div>)}</div>;
+}
+
+function PeerList({ peers, onDisconnect, busy }: { peers: RemotePeerSnapshot[]; onDisconnect: (peerId: string) => void; busy: Record<string, boolean> }) {
+  return <div className="peer-list">{peers.map((item) => <div className="peer-row" key={item.peerId}><span className="peer-icon"><Icon name="monitor" /></span><div><b>{item.host}:{item.port}</b><small>{item.peerId}</small></div><span className={"state-chip " + (item.status === "CONNECTED" ? "success" : "")}>{item.status}</span><button className="button secondary small" onClick={() => onDisconnect(item.peerId)} disabled={item.status !== "CONNECTED" || !!busy["peer-disconnect-" + item.peerId]}>Disconnect</button></div>)}</div>;
+}
+
+function ActivityList({ activities }: { activities: ActivityItem[] }) {
+  return <div className="activity-list">{activities.map((activity) => <div className="activity-row" key={activity.id}><span className={"activity-indicator " + activity.level.toLowerCase()} /><div><b>{activity.message}</b><small>{activity.category} · {activity.time}</small></div></div>)}</div>;
+}
+
+function TransferProgressCard({ progress, onCancel }: { progress: InternetTransferProgress; onCancel: () => void }) {
+  const percent = progress.totalBytes > 0 ? Math.min(100, progress.transferredBytes / progress.totalBytes * 100) : progress.status === "COMPLETED" ? 100 : 0;
+  return <div className="transfer-row"><FileTypeIcon name={progress.fileName} /><div className="transfer-main"><div className="transfer-top"><b>{progress.fileName}</b><span className={"state-chip " + (progress.status === "COMPLETED" ? "success" : "")}>{progress.status}</span></div><small>{progress.detail}</small><div className="progress-track"><div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} /></div><div className="transfer-meta"><span>{formatBytes(progress.transferredBytes)} of {formatBytes(progress.totalBytes)} · {percent.toFixed(1)}%</span>{progress.status !== "COMPLETED" && <button className="text-link danger" onClick={onCancel}>Cancel</button>}</div></div></div>;
 }
 
 function parseListeningPort(value: string): number | null {
