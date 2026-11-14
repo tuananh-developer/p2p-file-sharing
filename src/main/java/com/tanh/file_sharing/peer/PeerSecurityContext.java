@@ -1,30 +1,5 @@
 package com.tanh.file_sharing.peer;
 
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.BasicConstraints;
-import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.KeyPurposeId;
-import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-import javax.net.ssl.X509ExtendedKeyManager;
-import java.net.Socket;
-import java.security.Principal;
-import javax.net.ssl.SSLServerSocket;
-import javax.net.ssl.SSLServerSocketFactory;
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
@@ -38,16 +13,14 @@ import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
 import java.security.Security;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -62,11 +35,38 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLServerSocketFactory;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509ExtendedKeyManager;
+import javax.net.ssl.X509TrustManager;
+
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+
 /**
- * Owns the local RSA-3072 identity and the explicitly trusted peer certificate pins.
+ * Owns the local RSA-3072 identity and the explicitly trusted peer certificate
+ * pins.
  *
- * Private key files are restricted to the current OS user (0600 on POSIX systems).
- * Peer traffic is accepted only over TLS 1.3 with mutual certificate authentication.
+ * Private key files are restricted to the current OS user (0600 on POSIX
+ * systems).
+ * Peer traffic is accepted only over TLS 1.3 with mutual certificate
+ * authentication.
  */
 public final class PeerSecurityContext {
     public static final String TLS_PROTOCOL = "TLSv1.3";
@@ -148,7 +148,7 @@ public final class PeerSecurityContext {
     public SSLServerSocket createServerSocket() throws IOException {
         SSLServerSocketFactory factory = sslContext().getServerSocketFactory();
         SSLServerSocket socket = (SSLServerSocket) factory.createServerSocket();
-        socket.setEnabledProtocols(new String[]{TLS_PROTOCOL});
+        socket.setEnabledProtocols(new String[] { TLS_PROTOCOL });
         socket.setNeedClientAuth(true);
         return socket;
     }
@@ -157,20 +157,20 @@ public final class PeerSecurityContext {
         SSLSocketFactory factory = sslContext().getSocketFactory();
         SSLSocket socket = (SSLSocket) factory.createSocket();
         socket.setUseClientMode(true);
-        socket.setEnabledProtocols(new String[]{TLS_PROTOCOL});
+        socket.setEnabledProtocols(new String[] { TLS_PROTOCOL });
         return socket;
     }
 
     public void beginServerHandshake(SSLSocket socket) throws IOException {
         socket.setUseClientMode(false);
         socket.setNeedClientAuth(true);
-        socket.setEnabledProtocols(new String[]{TLS_PROTOCOL});
+        socket.setEnabledProtocols(new String[] { TLS_PROTOCOL });
         socket.startHandshake();
     }
 
     public void beginClientHandshake(SSLSocket socket) throws IOException {
         socket.setUseClientMode(true);
-        socket.setEnabledProtocols(new String[]{TLS_PROTOCOL});
+        socket.setEnabledProtocols(new String[] { TLS_PROTOCOL });
         socket.startHandshake();
     }
 
@@ -185,8 +185,8 @@ public final class PeerSecurityContext {
             }
             try {
                 SSLContext context = SSLContext.getInstance(TLS_PROTOCOL);
-                context.init(new KeyManager[]{new LocalIdentityKeyManager()},
-                        new TrustManager[]{new PinnedPeerTrustManager()}, new SecureRandom());
+                context.init(new KeyManager[] { new LocalIdentityKeyManager() },
+                        new TrustManager[] { new PinnedPeerTrustManager() }, new SecureRandom());
                 sslContext = context;
                 return context;
             } catch (GeneralSecurityException exception) {
@@ -217,7 +217,8 @@ public final class PeerSecurityContext {
                 cert.verify(cert.getPublicKey());
                 verifyKeyPair(key, cert);
             } catch (GeneralSecurityException exception) {
-                throw new IOException("The saved peer identity is invalid. Refusing to generate a replacement identity.", exception);
+                throw new IOException(
+                        "The saved peer identity is invalid. Refusing to generate a replacement identity.", exception);
             }
             restrictFilePermissions(privateKeyPath);
             restrictFilePermissions(certificatePath);
@@ -245,7 +246,7 @@ public final class PeerSecurityContext {
             builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(
-                    new KeyPurposeId[]{KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth}));
+                    new KeyPurposeId[] { KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth }));
 
             ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA")
                     .setProvider(BouncyCastleProvider.PROVIDER_NAME)
@@ -391,9 +392,11 @@ public final class PeerSecurityContext {
     }
 
     /**
-     * Always presents this peer's RSA-3072 identity for both TLS client and server roles.
+     * Always presents this peer's RSA-3072 identity for both TLS client and server
+     * roles.
      * JSSE's default key manager can omit a self-signed RSA-3072 identity when the
-     * issuer hint is unfamiliar, even though TLS 1.3 supports the RSA-3072 signature scheme.
+     * issuer hint is unfamiliar, even though TLS 1.3 supports the RSA-3072
+     * signature scheme.
      */
     private final class LocalIdentityKeyManager extends X509ExtendedKeyManager {
         private boolean supports(String keyType) {
@@ -415,7 +418,7 @@ public final class PeerSecurityContext {
 
         @Override
         public String[] getClientAliases(String keyType, java.security.Principal[] issuers) {
-            return supports(keyType) ? new String[]{"local-peer"} : null;
+            return supports(keyType) ? new String[] { "local-peer" } : null;
         }
 
         @Override
@@ -425,7 +428,7 @@ public final class PeerSecurityContext {
 
         @Override
         public String[] getServerAliases(String keyType, java.security.Principal[] issuers) {
-            return supports(keyType) ? new String[]{"local-peer"} : null;
+            return supports(keyType) ? new String[] { "local-peer" } : null;
         }
 
         @Override
@@ -435,7 +438,7 @@ public final class PeerSecurityContext {
 
         @Override
         public java.security.cert.X509Certificate[] getCertificateChain(String alias) {
-            return "local-peer".equals(alias) ? new X509Certificate[]{certificate} : null;
+            return "local-peer".equals(alias) ? new X509Certificate[] { certificate } : null;
         }
 
         @Override
@@ -475,8 +478,9 @@ public final class PeerSecurityContext {
         @Override
         public X509Certificate[] getAcceptedIssuers() {
             // All generated peer certificates use the same self-signed issuer DN.
-            // Advertise it so the JSSE client key manager selects our mutual-TLS certificate.
-            return new X509Certificate[]{certificate};
+            // Advertise it so the JSSE client key manager selects our mutual-TLS
+            // certificate.
+            return new X509Certificate[] { certificate };
         }
     }
 }

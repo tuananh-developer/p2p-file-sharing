@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
-/** An already-opened, validated shared file plus its expected transfer metadata. */
+/**
+ * An already-opened, validated shared file plus its expected transfer metadata.
+ */
 public final class SharedFileSource implements AutoCloseable {
     private final String fileName;
     private final long size;

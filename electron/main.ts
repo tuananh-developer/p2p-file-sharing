@@ -4,7 +4,7 @@ import {
   dialog,
   ipcMain,
   session,
-  type OpenDialogOptions
+  type OpenDialogOptions,
 } from "electron";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -30,7 +30,7 @@ function setBackendStatus(status: BackendStatusSnapshot): void {
   backendStatus = status;
   publishEvent({
     event: "backendProcessStatusChanged",
-    data: { status: status.status, error: status.error ?? null }
+    data: { status: status.status, error: status.error ?? null },
   });
 }
 
@@ -40,7 +40,10 @@ bridge.on("event", (event: BackendEvent) => {
     if (state === "READY") {
       setBackendStatus({ status: "READY" });
     } else if (state === "STOPPED" && !isQuitting) {
-      setBackendStatus({ status: "FAILED", error: "Java backend stopped unexpectedly." });
+      setBackendStatus({
+        status: "FAILED",
+        error: "Java backend stopped unexpectedly.",
+      });
     }
   }
   publishEvent(event);
@@ -58,17 +61,27 @@ bridge.on("transportError", (message: string) => {
   publishEvent({ event: "backendProcessError", data: { message } });
 });
 
-bridge.on("exit", (result: { code: number | null; signal: NodeJS.Signals | null; expected: boolean }) => {
-  if (result.expected || isQuitting) {
-    setBackendStatus({ status: "STOPPED" });
-  } else {
-    setBackendStatus({
-      status: "FAILED",
-      error: "Java backend exited unexpectedly (code=" + String(result.code) + ")."
-    });
-  }
-  publishEvent({ event: "backendProcessExited", data: result });
-});
+bridge.on(
+  "exit",
+  (result: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    expected: boolean;
+  }) => {
+    if (result.expected || isQuitting) {
+      setBackendStatus({ status: "STOPPED" });
+    } else {
+      setBackendStatus({
+        status: "FAILED",
+        error:
+          "Java backend exited unexpectedly (code=" +
+          String(result.code) +
+          ").",
+      });
+    }
+    publishEvent({ event: "backendProcessExited", data: result });
+  },
+);
 
 async function startBackend(): Promise<BackendStatusSnapshot> {
   if (backendStart) {
@@ -93,8 +106,9 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
 
       if (!existsSync(libDirectory) || !statSync(libDirectory).isDirectory()) {
         throw new Error(
-          "Java backend libraries were not found at " + libDirectory +
-          ". Run ./gradlew --no-daemon installDist before starting the desktop app."
+          "Java backend libraries were not found at " +
+            libDirectory +
+            ". Run ./gradlew --no-daemon installDist before starting the desktop app.",
         );
       }
 
@@ -103,10 +117,12 @@ async function startBackend(): Promise<BackendStatusSnapshot> {
       await bridge.start(javaExecutable, ["-cp", classpath, JAVA_MAIN_CLASS], {
         cwd: app.getPath("userData"),
         env: process.env,
-        startupTimeoutMs: 15_000
+        startupTimeoutMs: 15_000,
       });
       if (bridge.getState() !== "READY") {
-        throw new Error("Java backend exited before the desktop bridge became ready.");
+        throw new Error(
+          "Java backend exited before the desktop bridge became ready.",
+        );
       }
       setBackendStatus({ status: "READY" });
     } catch (error) {
@@ -135,7 +151,9 @@ function resolveJavaExecutable(): string {
     const executable = process.platform === "win32" ? "java.exe" : "java";
     const candidate = join(javaHome, "bin", executable);
     if (!existsSync(candidate)) {
-      throw new Error("JAVA_HOME does not contain a Java executable: " + candidate);
+      throw new Error(
+        "JAVA_HOME does not contain a Java executable: " + candidate,
+      );
     }
     return candidate;
   }
@@ -148,21 +166,38 @@ function requireBackendReady(): void {
   }
 }
 
-async function command<T>(name: string, payload: Record<string, unknown> = {}): Promise<T> {
+async function command<T>(
+  name: string,
+  payload: Record<string, unknown> = {},
+): Promise<T> {
   requireBackendReady();
   return bridge.request<T>(name, payload);
 }
 
 function requireText(value: unknown, field: string, maxLength = 512): string {
-  if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > maxLength) {
-    throw new Error(field + " must be a non-empty string no longer than " + maxLength + " characters.");
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.trim().length > maxLength
+  ) {
+    throw new Error(
+      field +
+        " must be a non-empty string no longer than " +
+        maxLength +
+        " characters.",
+    );
   }
   return value.trim();
 }
 
 function requirePort(value: unknown, field: string, allowAuto = false): number {
   const minimum = allowAuto ? 0 : 1;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > 65_535) {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < minimum ||
+    value > 65_535
+  ) {
     const range = allowAuto ? "0 and 65535" : "1 and 65535";
     throw new Error(field + " must be an integer between " + range + ".");
   }
@@ -173,14 +208,20 @@ function requireFingerprint(value: unknown): string {
   const fingerprint = requireText(value, "fingerprint", 191);
   const normalized = fingerprint.replace(/[:\\s-]/g, "");
   if (!/^[0-9a-f]{64}$/i.test(normalized)) {
-    throw new Error("fingerprint must be a SHA-256 certificate fingerprint (64 hexadecimal characters).");
+    throw new Error(
+      "fingerprint must be a SHA-256 certificate fingerprint (64 hexadecimal characters).",
+    );
   }
   return normalized.toUpperCase();
 }
 
 function requireUuid(value: unknown, field: string): string {
   const id = requireText(value, field, 64);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      id,
+    )
+  ) {
     throw new Error(field + " must be a valid UUID.");
   }
   return id;
@@ -205,14 +246,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle("backend:status", () => backendStatus);
   ipcMain.handle("backend:restart", () => startBackend());
 
-  ipcMain.handle("peer:start", async (_event, input: { bindAddress?: unknown; port?: unknown }) => {
-    const bindAddress = input?.bindAddress === undefined
-      ? "0.0.0.0"
-      : requireText(input.bindAddress, "bindAddress", 253);
-    const port = requirePort(input?.port, "port", true);
-    const data = await command<{ peer: unknown }>("peer.start", { bindAddress, port });
-    return data.peer;
-  });
+  ipcMain.handle(
+    "peer:start",
+    async (_event, input: { bindAddress?: unknown; port?: unknown }) => {
+      const bindAddress =
+        input?.bindAddress === undefined
+          ? "0.0.0.0"
+          : requireText(input.bindAddress, "bindAddress", 253);
+      const port = requirePort(input?.port, "port", true);
+      const data = await command<{ peer: unknown }>("peer.start", {
+        bindAddress,
+        port,
+      });
+      return data.peer;
+    },
+  );
 
   ipcMain.handle("peer:stop", async () => {
     const data = await command<{ peer: unknown }>("peer.stop");
@@ -229,15 +277,23 @@ function registerIpcHandlers(): void {
     return data.peers;
   });
 
-  ipcMain.handle("peer:connect", async (_event, input: { host?: unknown; port?: unknown }) => {
-    const host = requireText(input?.host, "host", 253);
-    const port = requirePort(input?.port, "port");
-    const data = await command<{ peer: unknown }>("peer.connect", { host, port });
-    return data.peer;
-  });
+  ipcMain.handle(
+    "peer:connect",
+    async (_event, input: { host?: unknown; port?: unknown }) => {
+      const host = requireText(input?.host, "host", 253);
+      const port = requirePort(input?.port, "port");
+      const data = await command<{ peer: unknown }>("peer.connect", {
+        host,
+        port,
+      });
+      return data.peer;
+    },
+  );
 
   ipcMain.handle("peer:disconnect", async (_event, peerId: unknown) => {
-    const data = await command<{ peer: unknown }>("peer.disconnect", { peerId: requireUuid(peerId, "peerId") });
+    const data = await command<{ peer: unknown }>("peer.disconnect", {
+      peerId: requireUuid(peerId, "peerId"),
+    });
     return data.peer;
   });
 
@@ -246,25 +302,31 @@ function registerIpcHandlers(): void {
     return data.security;
   });
 
-  ipcMain.handle("security:trust-peer", async (_event, fingerprint: unknown) => {
-    const data = await command<{ security: unknown }>("security.trust", {
-      fingerprint: requireFingerprint(fingerprint)
-    });
-    return data.security;
-  });
+  ipcMain.handle(
+    "security:trust-peer",
+    async (_event, fingerprint: unknown) => {
+      const data = await command<{ security: unknown }>("security.trust", {
+        fingerprint: requireFingerprint(fingerprint),
+      });
+      return data.security;
+    },
+  );
 
-  ipcMain.handle("security:untrust-peer", async (_event, fingerprint: unknown) => {
-    const data = await command<{ security: unknown }>("security.untrust", {
-      fingerprint: requireFingerprint(fingerprint)
-    });
-    return data.security;
-  });
+  ipcMain.handle(
+    "security:untrust-peer",
+    async (_event, fingerprint: unknown) => {
+      const data = await command<{ security: unknown }>("security.untrust", {
+        fingerprint: requireFingerprint(fingerprint),
+      });
+      return data.security;
+    },
+  );
 
   ipcMain.handle("share:choose-directory", async () => {
     requireBackendReady();
     const options: OpenDialogOptions = {
       title: "Choose a folder to share",
-      properties: ["openDirectory", "createDirectory"]
+      properties: ["openDirectory", "createDirectory"],
     };
     const result = mainWindow
       ? await dialog.showOpenDialog(mainWindow, options)
@@ -275,13 +337,15 @@ function registerIpcHandlers(): void {
     }
     const data = await command<{ sharedDirectory: unknown }>(
       "share.setDirectory",
-      { path: selectedPath }
+      { path: selectedPath },
     );
     return data.sharedDirectory;
   });
 
   ipcMain.handle("share:get-directory", async () => {
-    const data = await command<{ sharedDirectory: unknown }>("share.getDirectory");
+    const data = await command<{ sharedDirectory: unknown }>(
+      "share.getDirectory",
+    );
     return data.sharedDirectory;
   });
 
@@ -291,77 +355,95 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("files:list-remote", async (_event, peerId: unknown) => {
-    const data = await command<{ files: unknown[] }>(
-      "files.listRemote",
-      { peerId: requireUuid(peerId, "peerId") }
-    );
+    const data = await command<{ files: unknown[] }>("files.listRemote", {
+      peerId: requireUuid(peerId, "peerId"),
+    });
     return data.files;
   });
 
   ipcMain.handle("files:search", async (_event, keyword: unknown) => {
-    const normalized = keyword === undefined || keyword === null
-      ? ""
-      : typeof keyword === "string" ? keyword.trim() : (() => { throw new Error("keyword must be a string."); })();
+    const normalized =
+      keyword === undefined || keyword === null
+        ? ""
+        : typeof keyword === "string"
+          ? keyword.trim()
+          : (() => {
+              throw new Error("keyword must be a string.");
+            })();
     if (normalized.length > 256) {
       throw new Error("keyword must not exceed 256 characters.");
     }
     return command("files.search", { keyword: normalized });
   });
 
-  ipcMain.handle("transfer:download", async (_event, input: { peerId?: unknown; fileName?: unknown }) => {
-    requireBackendReady();
-    const peerId = requireUuid(input?.peerId, "peerId");
-    const fileName = requireFileName(input?.fileName);
-    const options: OpenDialogOptions = {
-      title: "Choose the download folder",
-      properties: ["openDirectory", "createDirectory"]
-    };
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-    const selectedPath = result.filePaths.at(0);
-    if (result.canceled || !selectedPath) {
-      return null;
-    }
-    const data = await command<{ download: unknown }>("transfer.download", {
-      peerId,
-      fileName,
-      destinationDir: selectedPath
-    });
-    return data.download;
-  });
+  ipcMain.handle(
+    "transfer:download",
+    async (_event, input: { peerId?: unknown; fileName?: unknown }) => {
+      requireBackendReady();
+      const peerId = requireUuid(input?.peerId, "peerId");
+      const fileName = requireFileName(input?.fileName);
+      const options: OpenDialogOptions = {
+        title: "Choose the download folder",
+        properties: ["openDirectory", "createDirectory"],
+      };
+      const result = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options);
+      const selectedPath = result.filePaths.at(0);
+      if (result.canceled || !selectedPath) {
+        return null;
+      }
+      const data = await command<{ download: unknown }>("transfer.download", {
+        peerId,
+        fileName,
+        destinationDir: selectedPath,
+      });
+      return data.download;
+    },
+  );
 
-  ipcMain.handle("transfer:download-multi", async (_event, input: { peerIds?: unknown; fileName?: unknown }) => {
-    requireBackendReady();
-    if (!Array.isArray(input?.peerIds) || input.peerIds.length < 1 || input.peerIds.length > 16) {
-      throw new Error("peerIds must contain between 1 and 16 peer IDs.");
-    }
-    const peerIds = [...new Set(input.peerIds.map((value) => requireUuid(value, "peerId")))];
-    const fileName = requireFileName(input?.fileName);
-    const options: OpenDialogOptions = {
-      title: "Choose the download folder",
-      properties: ["openDirectory", "createDirectory"]
-    };
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-    const selectedPath = result.filePaths.at(0);
-    if (result.canceled || !selectedPath) {
-      return null;
-    }
-    const data = await command<{ download: unknown }>("transfer.downloadMulti", {
-      peerIds,
-      fileName,
-      destinationDir: selectedPath
-    });
-    return data.download;
-  });
+  ipcMain.handle(
+    "transfer:download-multi",
+    async (_event, input: { peerIds?: unknown; fileName?: unknown }) => {
+      requireBackendReady();
+      if (
+        !Array.isArray(input?.peerIds) ||
+        input.peerIds.length < 1 ||
+        input.peerIds.length > 16
+      ) {
+        throw new Error("peerIds must contain between 1 and 16 peer IDs.");
+      }
+      const peerIds = [
+        ...new Set(input.peerIds.map((value) => requireUuid(value, "peerId"))),
+      ];
+      const fileName = requireFileName(input?.fileName);
+      const options: OpenDialogOptions = {
+        title: "Choose the download folder",
+        properties: ["openDirectory", "createDirectory"],
+      };
+      const result = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options);
+      const selectedPath = result.filePaths.at(0);
+      if (result.canceled || !selectedPath) {
+        return null;
+      }
+      const data = await command<{ download: unknown }>(
+        "transfer.downloadMulti",
+        {
+          peerIds,
+          fileName,
+          destinationDir: selectedPath,
+        },
+      );
+      return data.download;
+    },
+  );
 
   ipcMain.handle("transfer:cancel", async (_event, taskId: unknown) => {
-    const data = await command<{ transfer: unknown }>(
-      "transfer.cancel",
-      { taskId: requireUuid(taskId, "taskId") }
-    );
+    const data = await command<{ transfer: unknown }>("transfer.cancel", {
+      taskId: requireUuid(taskId, "taskId"),
+    });
     return data.transfer;
   });
 
@@ -374,7 +456,7 @@ function registerIpcHandlers(): void {
     requireBackendReady();
     const options: OpenDialogOptions = {
       title: "Choose the previous download folder",
-      properties: ["openDirectory"]
+      properties: ["openDirectory"],
     };
     const result = mainWindow
       ? await dialog.showOpenDialog(mainWindow, options)
@@ -385,29 +467,43 @@ function registerIpcHandlers(): void {
       return null;
     }
     resumableDirectory = selectedPath;
-    const data = await command<{ downloads: unknown[] }>("transfer.listResumable", {
-      destinationDir: selectedPath
-    });
+    const data = await command<{ downloads: unknown[] }>(
+      "transfer.listResumable",
+      {
+        destinationDir: selectedPath,
+      },
+    );
     return data.downloads;
   });
 
-  ipcMain.handle("transfer:resume", async (_event, input: { taskId?: unknown; peerIds?: unknown }) => {
-    requireBackendReady();
-    if (!resumableDirectory) {
-      throw new Error("Find interrupted downloads and select their folder first.");
-    }
-    if (!Array.isArray(input?.peerIds) || input.peerIds.length < 1 || input.peerIds.length > 16) {
-      throw new Error("peerIds must contain between 1 and 16 peer IDs.");
-    }
-    const peerIds = [...new Set(input.peerIds.map((value) => requireUuid(value, "peerId")))];
-    const taskId = requireUuid(input?.taskId, "taskId");
-    const data = await command<{ download: unknown }>("transfer.resume", {
-      taskId,
-      peerIds,
-      destinationDir: resumableDirectory
-    });
-    return data.download;
-  });
+  ipcMain.handle(
+    "transfer:resume",
+    async (_event, input: { taskId?: unknown; peerIds?: unknown }) => {
+      requireBackendReady();
+      if (!resumableDirectory) {
+        throw new Error(
+          "Find interrupted downloads and select their folder first.",
+        );
+      }
+      if (
+        !Array.isArray(input?.peerIds) ||
+        input.peerIds.length < 1 ||
+        input.peerIds.length > 16
+      ) {
+        throw new Error("peerIds must contain between 1 and 16 peer IDs.");
+      }
+      const peerIds = [
+        ...new Set(input.peerIds.map((value) => requireUuid(value, "peerId"))),
+      ];
+      const taskId = requireUuid(input?.taskId, "taskId");
+      const data = await command<{ download: unknown }>("transfer.resume", {
+        taskId,
+        peerIds,
+        destinationDir: resumableDirectory,
+      });
+      return data.download;
+    },
+  );
 }
 
 function installContentSecurityPolicy(): void {
@@ -426,15 +522,15 @@ function installContentSecurityPolicy(): void {
     connectSources,
     "object-src 'none';",
     "base-uri 'none';",
-    "frame-ancestors 'none';"
+    "frame-ancestors 'none';",
   ].join(" ");
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [policy]
-      }
+        "Content-Security-Policy": [policy],
+      },
     });
   });
 }
@@ -452,8 +548,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
-    }
+      webSecurity: true,
+    },
   });
 
   let windowShown = false;
@@ -501,10 +597,10 @@ function createWindow(): void {
       console.error("[Electron] Main frame failed to load:", {
         errorCode,
         errorDescription,
-        validatedURL
+        validatedURL,
       });
       showMainWindow("renderer-load-failed");
-    }
+    },
   );
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -517,7 +613,9 @@ function createWindow(): void {
   if (!app.isPackaged && process.env.VITE_RENDERER_URL) {
     void mainWindow.loadURL(process.env.VITE_RENDERER_URL);
   } else {
-    void mainWindow.loadFile(join(app.getAppPath(), "dist", "renderer", "index.html"));
+    void mainWindow.loadFile(
+      join(app.getAppPath(), "dist", "renderer", "index.html"),
+    );
   }
 
   mainWindow.on("closed", () => {
@@ -531,20 +629,23 @@ function createWindow(): void {
 
 registerIpcHandlers();
 
-app.whenReady().then(async () => {
-  installContentSecurityPolicy();
-  await startBackend();
-  createWindow();
+app
+  .whenReady()
+  .then(async () => {
+    installContentSecurityPolicy();
+    await startBackend();
+    createWindow();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  })
+  .catch((error: unknown) => {
+    console.error("Could not initialize the desktop application:", error);
+    app.quit();
   });
-}).catch((error: unknown) => {
-  console.error("Could not initialize the desktop application:", error);
-  app.quit();
-});
 
 app.on("window-all-closed", () => {
   app.quit();

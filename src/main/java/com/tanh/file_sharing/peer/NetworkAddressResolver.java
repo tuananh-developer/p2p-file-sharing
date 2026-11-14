@@ -4,13 +4,14 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.TreeSet;
 
-/** Finds the local IPv4 addresses that can be advertised for an active listener. */
+/**
+ * Finds the local IPv4 addresses that can be advertised for an active listener.
+ */
 public final class NetworkAddressResolver {
     public static final String AUTO_BIND_ADDRESS = "0.0.0.0";
 

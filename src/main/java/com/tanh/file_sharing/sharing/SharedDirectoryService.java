@@ -1,9 +1,5 @@
 package com.tanh.file_sharing.sharing;
 
-import com.tanh.file_sharing.model.SharedDirectorySnapshot;
-import com.tanh.file_sharing.model.SharedFileSnapshot;
-import com.tanh.file_sharing.peer.PeerException;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -23,6 +19,10 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+
+import com.tanh.file_sharing.model.SharedDirectorySnapshot;
+import com.tanh.file_sharing.model.SharedFileSnapshot;
+import com.tanh.file_sharing.peer.PeerException;
 
 /**
  * Manages the user-approved directory for the lifetime of this Java process.
@@ -119,7 +119,8 @@ public final class SharedDirectoryService {
     }
 
     /**
-     * Opens a shared file and computes its SHA-256 for metadata / full-file transfers.
+     * Opens a shared file and computes its SHA-256 for metadata / full-file
+     * transfers.
      */
     public SharedFileSource openFile(String fileName) {
         return openFileInternal(fileName, null, true);

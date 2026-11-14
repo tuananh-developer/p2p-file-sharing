@@ -1,29 +1,7 @@
 package com.tanh.file_sharing.peer;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tanh.file_sharing.event.EventPublisher;
-import com.tanh.file_sharing.model.ConnectionDirection;
-import com.tanh.file_sharing.model.ConnectionStatus;
-import com.tanh.file_sharing.model.PeerSnapshot;
-import com.tanh.file_sharing.model.PeerStatus;
-import com.tanh.file_sharing.model.RemotePeerSnapshot;
-import com.tanh.file_sharing.model.SharedDirectorySnapshot;
-import com.tanh.file_sharing.model.SharedFileSnapshot;
-import com.tanh.file_sharing.model.RemoteFileSearchResult;
-import com.tanh.file_sharing.model.FileSearchError;
-import com.tanh.file_sharing.model.FileSearchResponse;
-import com.tanh.file_sharing.model.DownloadAccepted;
-import com.tanh.file_sharing.model.TransferSnapshot;
-import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
-import com.tanh.file_sharing.model.SecuritySnapshot;
-import com.tanh.file_sharing.protocol.FramedJsonChannel;
-import com.tanh.file_sharing.protocol.PeerProtocol;
-import com.tanh.file_sharing.protocol.ProtocolException;
-import com.tanh.file_sharing.sharing.SharedDirectoryService;
-import com.tanh.file_sharing.transfer.TransferService;
-
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.BindException;
 import java.net.ConnectException;
 import java.net.InetAddress;
@@ -34,20 +12,16 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
-import javax.net.ssl.SSLHandshakeException;
-import javax.net.ssl.SSLServerSocket;
-import javax.net.ssl.SSLSocket;
 import java.nio.file.Path;
-import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.Locale;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -56,7 +30,36 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Coordinates the local peer lifecycle and incoming/outgoing TCP connections. */
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tanh.file_sharing.event.EventPublisher;
+import com.tanh.file_sharing.model.ConnectionDirection;
+import com.tanh.file_sharing.model.ConnectionStatus;
+import com.tanh.file_sharing.model.DownloadAccepted;
+import com.tanh.file_sharing.model.FileSearchError;
+import com.tanh.file_sharing.model.FileSearchResponse;
+import com.tanh.file_sharing.model.PeerSnapshot;
+import com.tanh.file_sharing.model.PeerStatus;
+import com.tanh.file_sharing.model.RemoteFileSearchResult;
+import com.tanh.file_sharing.model.RemotePeerSnapshot;
+import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
+import com.tanh.file_sharing.model.SecuritySnapshot;
+import com.tanh.file_sharing.model.SharedDirectorySnapshot;
+import com.tanh.file_sharing.model.SharedFileSnapshot;
+import com.tanh.file_sharing.model.TransferSnapshot;
+import com.tanh.file_sharing.protocol.FramedJsonChannel;
+import com.tanh.file_sharing.protocol.PeerProtocol;
+import com.tanh.file_sharing.protocol.ProtocolException;
+import com.tanh.file_sharing.sharing.SharedDirectoryService;
+import com.tanh.file_sharing.transfer.TransferService;
+
+/**
+ * Coordinates the local peer lifecycle and incoming/outgoing TCP connections.
+ */
 public final class PeerService implements AutoCloseable {
     public static final int CONNECT_TIMEOUT_MILLIS = 5_000;
     public static final int HANDSHAKE_TIMEOUT_MILLIS = 5_000;
@@ -90,7 +93,10 @@ public final class PeerService implements AutoCloseable {
         this(objectMapper, events, peerId, createDefaultSecurityContext());
     }
 
-    /** Test and advanced embedding constructor; production uses the per-user default identity directory. */
+    /**
+     * Test and advanced embedding constructor; production uses the per-user default
+     * identity directory.
+     */
     public PeerService(ObjectMapper objectMapper, EventPublisher events, UUID peerId, Path securityDirectory) {
         this(objectMapper, events, peerId, createSecurityContext(securityDirectory));
     }
@@ -135,7 +141,8 @@ public final class PeerService implements AutoCloseable {
             }
 
             String addressText = requestedBindAddress == null || requestedBindAddress.isBlank()
-                    ? NetworkAddressResolver.AUTO_BIND_ADDRESS : requestedBindAddress.trim();
+                    ? NetworkAddressResolver.AUTO_BIND_ADDRESS
+                    : requestedBindAddress.trim();
             transition(PeerStatus.STARTING);
             SSLServerSocket candidate = null;
             try {
@@ -171,7 +178,8 @@ public final class PeerService implements AutoCloseable {
             } catch (SecurityException exception) {
                 closeQuietly(candidate);
                 resetAfterStartFailure();
-                throw new PeerException("PERMISSION_DENIED", "Permission denied while opening the listening port.", exception);
+                throw new PeerException("PERMISSION_DENIED", "Permission denied while opening the listening port.",
+                        exception);
             } catch (IOException exception) {
                 closeQuietly(candidate);
                 resetAfterStartFailure();
@@ -273,7 +281,8 @@ public final class PeerService implements AutoCloseable {
         try {
             socket = securityContext.createClientSocket();
         } catch (IOException exception) {
-            throw new PeerException("TLS_INITIALIZATION_FAILED", "Could not initialize secure peer transport.", exception);
+            throw new PeerException("TLS_INITIALIZATION_FAILED", "Could not initialize secure peer transport.",
+                    exception);
         }
         pendingSockets.add(socket);
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CONNECT_TIMEOUT_MILLIS);
@@ -297,7 +306,8 @@ public final class PeerService implements AutoCloseable {
                 throw new PeerException("HANDSHAKE_FAILED", "A peer cannot connect to itself.");
             }
             if (status != PeerStatus.RUNNING) {
-                throw new PeerException("PEER_NOT_RUNNING", "Local peer stopped while the connection was being established.");
+                throw new PeerException("PEER_NOT_RUNNING",
+                        "Local peer stopped while the connection was being established.");
             }
 
             String remoteHost = socket.getInetAddress().getHostAddress();
@@ -320,7 +330,8 @@ public final class PeerService implements AutoCloseable {
             throw new PeerException("CONNECT_TIMEOUT", "Connection or handshake timed out after 5 seconds.", exception);
         } catch (UnknownHostException exception) {
             closeQuietly(socket);
-            throw new PeerException("INVALID_ADDRESS", "Could not resolve peer host '" + normalizedHost + "'.", exception);
+            throw new PeerException("INVALID_ADDRESS", "Could not resolve peer host '" + normalizedHost + "'.",
+                    exception);
         } catch (ConnectException | NoRouteToHostException exception) {
             closeQuietly(socket);
             throw new PeerException("CONNECTION_REFUSED",
@@ -346,7 +357,8 @@ public final class PeerService implements AutoCloseable {
             if (status != PeerStatus.RUNNING) {
                 throw new PeerException("PEER_NOT_RUNNING", "Local peer stopped while connecting.", exception);
             }
-            throw new PeerException("HANDSHAKE_FAILED", "Could not complete peer handshake: " + exception.getMessage(), exception);
+            throw new PeerException("HANDSHAKE_FAILED", "Could not complete peer handshake: " + exception.getMessage(),
+                    exception);
         } finally {
             pendingSockets.remove(socket);
         }
@@ -530,8 +542,7 @@ public final class PeerService implements AutoCloseable {
                 .thenComparing(RemoteFileSearchResult::host)
                 .thenComparingInt(RemoteFileSearchResult::port)
                 .thenComparing(file -> file.peerId().toString()));
-        errors.sort(Comparator.comparing(error ->
-                error.peerId() == null ? "" : error.peerId().toString()));
+        errors.sort(Comparator.comparing(error -> error.peerId() == null ? "" : error.peerId().toString()));
         return new FileSearchResponse(results, errors);
     }
 
@@ -668,7 +679,8 @@ public final class PeerService implements AutoCloseable {
                 registered.closeSilently();
             }
             if (status == PeerStatus.RUNNING) {
-                LOGGER.log(Level.WARNING, "Incoming peer connection failed during TLS or protocol handshake.", exception);
+                LOGGER.log(Level.WARNING, "Incoming peer connection failed during TLS or protocol handshake.",
+                        exception);
             }
         } finally {
             pendingSockets.remove(socket);
@@ -686,7 +698,8 @@ public final class PeerService implements AutoCloseable {
                     @Override
                     public com.tanh.file_sharing.sharing.SharedFileSource openFile(String fileName) {
                         if (status != PeerStatus.RUNNING) {
-                            throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                            throw new PeerException("PEER_NOT_RUNNING",
+                                    "The local peer is not accepting file requests.");
                         }
                         return sharedDirectoryService.openFile(fileName);
                     }
@@ -695,7 +708,8 @@ public final class PeerService implements AutoCloseable {
                     public com.tanh.file_sharing.sharing.SharedFileSource openFileRange(
                             String fileName, long expectedSize) {
                         if (status != PeerStatus.RUNNING) {
-                            throw new PeerException("PEER_NOT_RUNNING", "The local peer is not accepting file requests.");
+                            throw new PeerException("PEER_NOT_RUNNING",
+                                    "The local peer is not accepting file requests.");
                         }
                         return sharedDirectoryService.openFileRange(fileName, expectedSize);
                     }
@@ -731,7 +745,8 @@ public final class PeerService implements AutoCloseable {
     private boolean registerConnection(PeerConnection candidate) {
         UUID remoteId = candidate.getRemotePeerId();
         ConnectionDirection preferred = peerId.toString().compareTo(remoteId.toString()) < 0
-                ? ConnectionDirection.OUTGOING : ConnectionDirection.INCOMING;
+                ? ConnectionDirection.OUTGOING
+                : ConnectionDirection.INCOMING;
 
         synchronized (connectionLock) {
             if (status != PeerStatus.RUNNING) {
@@ -803,7 +818,8 @@ public final class PeerService implements AutoCloseable {
 
     private PeerSnapshot snapshot() {
         List<String> addresses = status == PeerStatus.RUNNING
-                ? NetworkAddressResolver.addressesFor(bindAddress) : List.of();
+                ? NetworkAddressResolver.addressesFor(bindAddress)
+                : List.of();
         return new PeerSnapshot(peerId, status, bindAddress, listeningPort, addresses);
     }
 

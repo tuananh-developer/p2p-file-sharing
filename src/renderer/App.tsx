@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import type {
   BackendEvent,
   BackendStatusSnapshot,
@@ -10,7 +16,7 @@ import type {
   SharedFileSnapshot,
   TransferSnapshot,
   ResumableDownloadSnapshot,
-  SecuritySnapshot
+  SecuritySnapshot,
 } from "../../electron/shared/contracts";
 
 interface ActivityItem {
@@ -22,16 +28,26 @@ interface ActivityItem {
 }
 
 function App() {
-  const [backend, setBackend] = useState<BackendStatusSnapshot>({ status: "STARTING" });
+  const [backend, setBackend] = useState<BackendStatusSnapshot>({
+    status: "STARTING",
+  });
   const [peer, setPeer] = useState<PeerSnapshot | null>(null);
   const [peers, setPeers] = useState<RemotePeerSnapshot[]>([]);
-  const [directory, setDirectory] = useState<SharedDirectorySnapshot | null>(null);
+  const [directory, setDirectory] = useState<SharedDirectorySnapshot | null>(
+    null,
+  );
   const [localFiles, setLocalFiles] = useState<SharedFileSnapshot[]>([]);
   const [keyword, setKeyword] = useState("");
-  const [searchResults, setSearchResults] = useState<RemoteFileSearchResult[]>([]);
-  const [searchErrors, setSearchErrors] = useState<FileSearchResponse["errors"]>([]);
+  const [searchResults, setSearchResults] = useState<RemoteFileSearchResult[]>(
+    [],
+  );
+  const [searchErrors, setSearchErrors] = useState<
+    FileSearchResponse["errors"]
+  >([]);
   const [transfers, setTransfers] = useState<TransferSnapshot[]>([]);
-  const [resumableDownloads, setResumableDownloads] = useState<ResumableDownloadSnapshot[]>([]);
+  const [resumableDownloads, setResumableDownloads] = useState<
+    ResumableDownloadSnapshot[]
+  >([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
   const [trustedFingerprintInput, setTrustedFingerprintInput] = useState("");
@@ -40,27 +56,42 @@ function App() {
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");
   const [remotePort, setRemotePort] = useState("5002");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [notice, setNotice] = useState<{ kind: "success" | "error" | "info"; message: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    kind: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
 
-  const addActivity = useCallback((message: string, level = "INFO", timestamp?: string, id?: string, category = "APPLICATION") => {
-    const parsedTime = timestamp ? new Date(timestamp) : new Date();
-    const time = Number.isNaN(parsedTime.getTime())
-      ? new Date().toLocaleTimeString()
-      : parsedTime.toLocaleTimeString();
-    setActivities((current) => {
-      const entryId = id && id.length > 0 ? id : crypto.randomUUID();
-      if (current.some((item) => item.id === entryId)) {
-        return current;
-      }
-      return [{
-        id: entryId,
-        message,
-        level,
-        category,
-        time
-      }, ...current].slice(0, 100);
-    });
-  }, []);
+  const addActivity = useCallback(
+    (
+      message: string,
+      level = "INFO",
+      timestamp?: string,
+      id?: string,
+      category = "APPLICATION",
+    ) => {
+      const parsedTime = timestamp ? new Date(timestamp) : new Date();
+      const time = Number.isNaN(parsedTime.getTime())
+        ? new Date().toLocaleTimeString()
+        : parsedTime.toLocaleTimeString();
+      setActivities((current) => {
+        const entryId = id && id.length > 0 ? id : crypto.randomUUID();
+        if (current.some((item) => item.id === entryId)) {
+          return current;
+        }
+        return [
+          {
+            id: entryId,
+            message,
+            level,
+            category,
+            time,
+          },
+          ...current,
+        ].slice(0, 100);
+      });
+    },
+    [],
+  );
 
   const refreshAll = useCallback(async () => {
     const status = await window.p2p.backend.getStatus();
@@ -75,13 +106,14 @@ function App() {
       return;
     }
 
-    const [peerState, knownPeers, shareState, transferList, securityState] = await Promise.all([
-      window.p2p.peer.getStatus().catch(() => null),
-      window.p2p.peer.list().catch(() => []),
-      window.p2p.share.getDirectory().catch(() => null),
-      window.p2p.transfer.list().catch(() => []),
-      window.p2p.security.getStatus().catch(() => null)
-    ]);
+    const [peerState, knownPeers, shareState, transferList, securityState] =
+      await Promise.all([
+        window.p2p.peer.getStatus().catch(() => null),
+        window.p2p.peer.list().catch(() => []),
+        window.p2p.share.getDirectory().catch(() => null),
+        window.p2p.transfer.list().catch(() => []),
+        window.p2p.security.getStatus().catch(() => null),
+      ]);
 
     setPeer(peerState);
     setPeers(knownPeers);
@@ -105,13 +137,20 @@ function App() {
       switch (event.event) {
         case "backendProcessStatusChanged": {
           const status = data.status;
-          if (status === "READY" || status === "FAILED" || status === "STOPPED" || status === "STARTING") {
+          if (
+            status === "READY" ||
+            status === "FAILED" ||
+            status === "STOPPED" ||
+            status === "STARTING"
+          ) {
             setBackend({
               status,
-              error: typeof data.error === "string" ? data.error : undefined
+              error: typeof data.error === "string" ? data.error : undefined,
             });
             if (status === "READY") {
-              void refreshAll().catch((error: unknown) => addActivity(errorMessage(error), "ERROR"));
+              void refreshAll().catch((error: unknown) =>
+                addActivity(errorMessage(error), "ERROR"),
+              );
             } else {
               setPeer(null);
               setPeers([]);
@@ -125,7 +164,10 @@ function App() {
         case "backendProcessError":
           setBackend({
             status: "FAILED",
-            error: typeof data.message === "string" ? data.message : "Java backend process failed."
+            error:
+              typeof data.message === "string"
+                ? data.message
+                : "Java backend process failed.",
           });
           setPeer(null);
           setPeers([]);
@@ -136,20 +178,31 @@ function App() {
           break;
         case "backendStatusChanged":
           if (data.status === "READY") {
-            void refreshAll().catch((error: unknown) => addActivity(errorMessage(error), "ERROR"));
+            void refreshAll().catch((error: unknown) =>
+              addActivity(errorMessage(error), "ERROR"),
+            );
           }
           break;
         case "peerStatusChanged":
-          void window.p2p.peer.getStatus().then(setPeer).catch(() => setPeer(null));
+          void window.p2p.peer
+            .getStatus()
+            .then(setPeer)
+            .catch(() => setPeer(null));
           break;
         case "connectionStatusChanged":
-          void window.p2p.peer.list().then(setPeers).catch(() => setPeers([]));
+          void window.p2p.peer
+            .list()
+            .then(setPeers)
+            .catch(() => setPeers([]));
           break;
         case "sharedDirectoryChanged": {
           const next = data as unknown as SharedDirectorySnapshot;
           setDirectory(next);
           if (next.configured) {
-            void window.p2p.share.listLocalFiles().then(setLocalFiles).catch(() => setLocalFiles([]));
+            void window.p2p.share
+              .listLocalFiles()
+              .then(setLocalFiles)
+              .catch(() => setLocalFiles([]));
           } else {
             setLocalFiles([]);
           }
@@ -163,16 +216,21 @@ function App() {
           break;
         case "activityLogged":
           addActivity(
-            typeof data.message === "string" ? data.message : "Activity event received.",
+            typeof data.message === "string"
+              ? data.message
+              : "Activity event received.",
             typeof data.level === "string" ? data.level : "INFO",
             typeof data.timestamp === "string" ? data.timestamp : undefined,
             typeof data.id === "string" ? data.id : undefined,
-            typeof data.category === "string" ? data.category : "APPLICATION"
+            typeof data.category === "string" ? data.category : "APPLICATION",
           );
           break;
         case "backendProcessExited":
           if (data.expected !== true) {
-            setBackend({ status: "FAILED", error: "Java backend exited unexpectedly." });
+            setBackend({
+              status: "FAILED",
+              error: "Java backend exited unexpectedly.",
+            });
             setPeer(null);
             setPeers([]);
             setDirectory(null);
@@ -201,34 +259,49 @@ function App() {
 
   const connectedPeers = useMemo(
     () => peers.filter((item) => item.status === "CONNECTED"),
-    [peers]
+    [peers],
   );
 
-  const runAction = useCallback(async (key: string, action: () => Promise<void>) => {
-    setBusy((current) => ({ ...current, [key]: true }));
-    setNotice(null);
-    try {
-      await action();
-    } catch (error) {
-      const message = errorMessage(error);
-      setNotice({ kind: "error", message });
-      addActivity(message, "ERROR");
-    } finally {
-      setBusy((current) => ({ ...current, [key]: false }));
-    }
-  }, [addActivity]);
+  const runAction = useCallback(
+    async (key: string, action: () => Promise<void>) => {
+      setBusy((current) => ({ ...current, [key]: true }));
+      setNotice(null);
+      try {
+        await action();
+      } catch (error) {
+        const message = errorMessage(error);
+        setNotice({ kind: "error", message });
+        addActivity(message, "ERROR");
+      } finally {
+        setBusy((current) => ({ ...current, [key]: false }));
+      }
+    },
+    [addActivity],
+  );
 
   const handleStartPeer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const port = parseListeningPort(listenPort);
     if (port === null) {
-      setNotice({ kind: "error", message: "Listening port must be between 0 and 65535. Use 0 for automatic allocation." });
+      setNotice({
+        kind: "error",
+        message:
+          "Listening port must be between 0 and 65535. Use 0 for automatic allocation.",
+      });
       return;
     }
     void runAction("peer-start", async () => {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
-      setNotice({ kind: "success", message: "Peer is listening on " + snapshot.bindAddress + ":" + snapshot.port + "." });
+      setNotice({
+        kind: "success",
+        message:
+          "Peer is listening on " +
+          snapshot.bindAddress +
+          ":" +
+          snapshot.port +
+          ".",
+      });
     });
   };
 
@@ -236,14 +309,20 @@ function App() {
     event.preventDefault();
     const fingerprint = trustedFingerprintInput.trim();
     if (!fingerprint) {
-      setNotice({ kind: "error", message: "Enter the other device's SHA-256 certificate fingerprint." });
+      setNotice({
+        kind: "error",
+        message: "Enter the other device's SHA-256 certificate fingerprint.",
+      });
       return;
     }
     void runAction("security-trust", async () => {
       const snapshot = await window.p2p.security.trustPeer(fingerprint);
       setSecurity(snapshot);
       setTrustedFingerprintInput("");
-      setNotice({ kind: "success", message: "Peer fingerprint added to the local trust list." });
+      setNotice({
+        kind: "success",
+        message: "Peer fingerprint added to the local trust list.",
+      });
     });
   };
 
@@ -251,7 +330,11 @@ function App() {
     void runAction("security-untrust-" + fingerprint, async () => {
       const snapshot = await window.p2p.security.untrustPeer(fingerprint);
       setSecurity(snapshot);
-      setNotice({ kind: "info", message: "Peer fingerprint removed. Future TLS connections from that identity will be rejected." });
+      setNotice({
+        kind: "info",
+        message:
+          "Peer fingerprint removed. Future TLS connections from that identity will be rejected.",
+      });
     });
   };
 
@@ -268,13 +351,22 @@ function App() {
     event.preventDefault();
     const port = parsePort(remotePort);
     if (port === null) {
-      setNotice({ kind: "error", message: "Remote port must be between 1 and 65535." });
+      setNotice({
+        kind: "error",
+        message: "Remote port must be between 1 and 65535.",
+      });
       return;
     }
     void runAction("peer-connect", async () => {
-      const connected = await window.p2p.peer.connect({ host: remoteHost.trim(), port });
+      const connected = await window.p2p.peer.connect({
+        host: remoteHost.trim(),
+        port,
+      });
       setPeers(await window.p2p.peer.list());
-      setNotice({ kind: "success", message: "Connected to " + connected.host + ":" + connected.port + "." });
+      setNotice({
+        kind: "success",
+        message: "Connected to " + connected.host + ":" + connected.port + ".",
+      });
     });
   };
 
@@ -306,43 +398,72 @@ function App() {
       setSearchErrors(result.errors);
       setNotice({
         kind: "success",
-        message: result.results.length + " file result(s) from " +
-          new Set(result.results.map((item) => item.peerId)).size + " peer(s)."
+        message:
+          result.results.length +
+          " file result(s) from " +
+          new Set(result.results.map((item) => item.peerId)).size +
+          " peer(s).",
       });
     });
   };
 
-  const matchingSourceIds = (file: RemoteFileSearchResult) => [...new Set(searchResults
-    .filter((candidate) => candidate.fileName === file.fileName && candidate.size === file.size)
-    .map((candidate) => candidate.peerId))].slice(0, 16);
+  const matchingSourceIds = (file: RemoteFileSearchResult) =>
+    [
+      ...new Set(
+        searchResults
+          .filter(
+            (candidate) =>
+              candidate.fileName === file.fileName &&
+              candidate.size === file.size,
+          )
+          .map((candidate) => candidate.peerId),
+      ),
+    ].slice(0, 16);
 
   const handleDownload = (file: RemoteFileSearchResult) => {
     const sourcePeerIds = matchingSourceIds(file);
     void runAction("download-" + file.fileName, async () => {
-      const accepted = sourcePeerIds.length > 1
-        ? await window.p2p.transfer.downloadMulti(sourcePeerIds, file.fileName)
-        : await window.p2p.transfer.download(file.peerId, file.fileName);
+      const accepted =
+        sourcePeerIds.length > 1
+          ? await window.p2p.transfer.downloadMulti(
+              sourcePeerIds,
+              file.fileName,
+            )
+          : await window.p2p.transfer.download(file.peerId, file.fileName);
       if (!accepted) {
         return;
       }
       setTransfers(await window.p2p.transfer.list());
       setNotice({
         kind: "success",
-        message: "Download queued as " + accepted.targetFileName +
-          (sourcePeerIds.length > 1 ? " using " + sourcePeerIds.length + " candidate peer(s)." : ".")
+        message:
+          "Download queued as " +
+          accepted.targetFileName +
+          (sourcePeerIds.length > 1
+            ? " using " + sourcePeerIds.length + " candidate peer(s)."
+            : "."),
       });
     });
   };
 
   const handleDownloadFromThisPeer = (file: RemoteFileSearchResult) => {
-    void runAction("download-single-" + file.peerId + "-" + file.fileName, async () => {
-      const accepted = await window.p2p.transfer.download(file.peerId, file.fileName);
-      if (!accepted) {
-        return;
-      }
-      setTransfers(await window.p2p.transfer.list());
-      setNotice({ kind: "success", message: "Download queued as " + accepted.targetFileName + "." });
-    });
+    void runAction(
+      "download-single-" + file.peerId + "-" + file.fileName,
+      async () => {
+        const accepted = await window.p2p.transfer.download(
+          file.peerId,
+          file.fileName,
+        );
+        if (!accepted) {
+          return;
+        }
+        setTransfers(await window.p2p.transfer.list());
+        setNotice({
+          kind: "success",
+          message: "Download queued as " + accepted.targetFileName + ".",
+        });
+      },
+    );
   };
 
   const handleFindResumable = () => {
@@ -352,23 +473,38 @@ function App() {
       addActivity("Scanned the selected folder for interrupted downloads.");
       setNotice({
         kind: "info",
-        message: found === null ? "Folder selection cancelled."
-          : found.length === 0 ? "No valid interrupted downloads were found."
-            : "Found " + found.length + " interrupted download(s)."
+        message:
+          found === null
+            ? "Folder selection cancelled."
+            : found.length === 0
+              ? "No valid interrupted downloads were found."
+              : "Found " + found.length + " interrupted download(s).",
       });
     });
   };
 
   const handleResumeTransfer = (taskId: string) => {
     if (connectedPeers.length === 0) {
-      setNotice({ kind: "error", message: "Connect to at least one source peer before resuming." });
+      setNotice({
+        kind: "error",
+        message: "Connect to at least one source peer before resuming.",
+      });
       return;
     }
     void runAction("resume-" + taskId, async () => {
-      await window.p2p.transfer.resume(taskId, connectedPeers.map((item) => item.peerId));
+      await window.p2p.transfer.resume(
+        taskId,
+        connectedPeers.map((item) => item.peerId),
+      );
       setTransfers(await window.p2p.transfer.list());
-      setResumableDownloads((current) => current.filter((item) => item.taskId !== taskId));
-      setNotice({ kind: "success", message: "Resume queued. Sources will be checked against the saved SHA-256." });
+      setResumableDownloads((current) =>
+        current.filter((item) => item.taskId !== taskId),
+      );
+      setNotice({
+        kind: "success",
+        message:
+          "Resume queued. Sources will be checked against the saved SHA-256.",
+      });
     });
   };
 
@@ -376,7 +512,10 @@ function App() {
     void runAction("cancel-" + taskId, async () => {
       await window.p2p.transfer.cancel(taskId);
       setTransfers(await window.p2p.transfer.list());
-      setNotice({ kind: "success", message: "Transfer cancellation requested." });
+      setNotice({
+        kind: "success",
+        message: "Transfer cancellation requested.",
+      });
     });
   };
 
@@ -403,11 +542,17 @@ function App() {
           </div>
         </div>
         <div className="topbar-right">
-          <span className={"status-pill status-" + backend.status.toLowerCase()}>
+          <span
+            className={"status-pill status-" + backend.status.toLowerCase()}
+          >
             <span className="status-dot" />
             Java backend · {backend.status}
           </span>
-          <button className="button button-quiet button-small" onClick={() => void refreshAll()} disabled={backend.status !== "READY" || busy.refresh}>
+          <button
+            className="button button-quiet button-small"
+            onClick={() => void refreshAll()}
+            disabled={backend.status !== "READY" || busy.refresh}
+          >
             Refresh state
           </button>
         </div>
@@ -416,11 +561,22 @@ function App() {
       {backend.status !== "READY" && (
         <section className="backend-banner">
           <div>
-            <strong>{backend.status === "STARTING" ? "Starting Java Core…" : "Java Core is unavailable"}</strong>
-            <p>{backend.error ?? "The desktop app is waiting for the JSON Lines bridge to report READY."}</p>
+            <strong>
+              {backend.status === "STARTING"
+                ? "Starting Java Core…"
+                : "Java Core is unavailable"}
+            </strong>
+            <p>
+              {backend.error ??
+                "The desktop app is waiting for the JSON Lines bridge to report READY."}
+            </p>
           </div>
           {backend.status === "FAILED" && (
-            <button className="button button-primary" onClick={handleRestartBackend} disabled={busy["backend-restart"]}>
+            <button
+              className="button button-primary"
+              onClick={handleRestartBackend}
+              disabled={busy["backend-restart"]}
+            >
               {busy["backend-restart"] ? "Restarting…" : "Retry backend"}
             </button>
           )}
@@ -430,7 +586,12 @@ function App() {
       {notice && (
         <div className={"notice notice-" + notice.kind} role="status">
           <span>{notice.message}</span>
-          <button aria-label="Dismiss notification" onClick={() => setNotice(null)}>×</button>
+          <button
+            aria-label="Dismiss notification"
+            onClick={() => setNotice(null)}
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -442,7 +603,12 @@ function App() {
                 <span className="eyebrow">LOCAL NODE</span>
                 <h1>Peer lifecycle</h1>
               </div>
-              <span className={"state-chip " + (peer?.status === "RUNNING" ? "state-running" : "state-idle")}>
+              <span
+                className={
+                  "state-chip " +
+                  (peer?.status === "RUNNING" ? "state-running" : "state-idle")
+                }
+              >
                 {peer?.status ?? "UNKNOWN"}
               </span>
             </div>
@@ -450,20 +616,54 @@ function App() {
             <form className="form-grid" onSubmit={handleStartPeer}>
               <label>
                 <span>Bind address (0.0.0.0 = Auto)</span>
-                <input value={bindAddress} onChange={(event) => setBindAddress(event.target.value)} placeholder="0.0.0.0 or a local IP" disabled={backend.status !== "READY"} />
+                <input
+                  value={bindAddress}
+                  onChange={(event) => setBindAddress(event.target.value)}
+                  placeholder="0.0.0.0 or a local IP"
+                  disabled={backend.status !== "READY"}
+                />
               </label>
               <label>
                 <span>Listening port (0 = Auto)</span>
-                <input type="number" min="0" max="65535" value={listenPort} onChange={(event) => setListenPort(event.target.value)} disabled={backend.status !== "READY"} />
+                <input
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={listenPort}
+                  onChange={(event) => setListenPort(event.target.value)}
+                  disabled={backend.status !== "READY"}
+                />
               </label>
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status === "RUNNING" || peer?.status === "STARTING" || peer?.status === "STOPPING" || busy["peer-start"]}>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={
+                    backend.status !== "READY" ||
+                    peer?.status === "RUNNING" ||
+                    peer?.status === "STARTING" ||
+                    peer?.status === "STOPPING" ||
+                    busy["peer-start"]
+                  }
+                >
                   {busy["peer-start"] ? "Starting…" : "Start peer"}
                 </button>
-                <button className="button button-danger" type="button" onClick={handleStopPeer} disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-stop"]}>
+                <button
+                  className="button button-danger"
+                  type="button"
+                  onClick={handleStopPeer}
+                  disabled={
+                    backend.status !== "READY" ||
+                    peer?.status !== "RUNNING" ||
+                    busy["peer-stop"]
+                  }
+                >
                   {busy["peer-stop"] ? "Stopping…" : "Stop peer"}
                 </button>
-                <span className="helper-text">Port 0 = Auto. Address 0.0.0.0 listens on all active IPv4 interfaces; enter one local IP to restrict it.</span>
+                <span className="helper-text">
+                  Port 0 = Auto. Address 0.0.0.0 listens on all active IPv4
+                  interfaces; enter one local IP to restrict it.
+                </span>
               </div>
             </form>
 
@@ -471,10 +671,21 @@ function App() {
               <span>Connect using</span>
               <div className="local-address-list">
                 {peer?.status === "RUNNING" ? (
-                  peer.addresses.length > 0
-                    ? peer.addresses.map((address) => <code key={address}>{address}:{peer.port}</code>)
-                    : <span className="helper-text">No non-loopback IPv4 address detected. Choose a specific interface address or check network connectivity.</span>
-                ) : <code>Not started</code>}
+                  peer.addresses.length > 0 ? (
+                    peer.addresses.map((address) => (
+                      <code key={address}>
+                        {address}:{peer.port}
+                      </code>
+                    ))
+                  ) : (
+                    <span className="helper-text">
+                      No non-loopback IPv4 address detected. Choose a specific
+                      interface address or check network connectivity.
+                    </span>
+                  )
+                ) : (
+                  <code>Not started</code>
+                )}
               </div>
             </div>
             <div className="local-peer-meta">
@@ -494,17 +705,39 @@ function App() {
             <form className="form-grid" onSubmit={handleConnect}>
               <label>
                 <span>Host / IP address</span>
-                <input value={remoteHost} onChange={(event) => setRemoteHost(event.target.value)} placeholder="192.168.1.10" disabled={backend.status !== "READY"} />
+                <input
+                  value={remoteHost}
+                  onChange={(event) => setRemoteHost(event.target.value)}
+                  placeholder="192.168.1.10"
+                  disabled={backend.status !== "READY"}
+                />
               </label>
               <label>
                 <span>Remote port</span>
-                <input type="number" min="1" max="65535" value={remotePort} onChange={(event) => setRemotePort(event.target.value)} disabled={backend.status !== "READY"} />
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={remotePort}
+                  onChange={(event) => setRemotePort(event.target.value)}
+                  disabled={backend.status !== "READY"}
+                />
               </label>
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["peer-connect"]}>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={
+                    backend.status !== "READY" ||
+                    peer?.status !== "RUNNING" ||
+                    busy["peer-connect"]
+                  }
+                >
                   {busy["peer-connect"] ? "Connecting…" : "Connect"}
                 </button>
-                <span className="helper-text">Start your local peer before connecting.</span>
+                <span className="helper-text">
+                  Start your local peer before connecting.
+                </span>
               </div>
             </form>
           </article>
@@ -517,26 +750,39 @@ function App() {
                 <span className="eyebrow">PEER SECURITY</span>
                 <h2>Encrypted and authenticated connections</h2>
               </div>
-              <span className="state-chip state-running">TLS 1.3 · Mutual authentication</span>
+              <span className="state-chip state-running">
+                TLS 1.3 · Mutual authentication
+              </span>
             </div>
 
             <div className="security-fingerprint">
-              <span className="security-label">This device's SHA-256 certificate fingerprint</span>
-              <code>{security?.localFingerprint ?? "Loading local identity…"}</code>
+              <span className="security-label">
+                This device's SHA-256 certificate fingerprint
+              </span>
+              <code>
+                {security?.localFingerprint ?? "Loading local identity…"}
+              </code>
             </div>
 
             <p className="security-guidance">
-              Exchange fingerprints with the other device through a separate trusted channel (for example, in person).
-              Add each other's fingerprint on both devices before connecting. Never trust a fingerprint received only
-              from the same network connection you are trying to authenticate.
+              Exchange fingerprints with the other device through a separate
+              trusted channel (for example, in person). Add each other's
+              fingerprint on both devices before connecting. Never trust a
+              fingerprint received only from the same network connection you are
+              trying to authenticate.
             </p>
 
-            <form className="security-trust-form" onSubmit={handleTrustFingerprint}>
+            <form
+              className="security-trust-form"
+              onSubmit={handleTrustFingerprint}
+            >
               <label>
                 <span>Other device's SHA-256 fingerprint</span>
                 <input
                   value={trustedFingerprintInput}
-                  onChange={(event) => setTrustedFingerprintInput(event.target.value)}
+                  onChange={(event) =>
+                    setTrustedFingerprintInput(event.target.value)
+                  }
                   placeholder="AA:BB:CC:… (64 hexadecimal characters)"
                   disabled={backend.status !== "READY"}
                   autoComplete="off"
@@ -553,7 +799,10 @@ function App() {
             </form>
 
             <div className="trusted-peer-list">
-              <span className="security-label">Trusted peer fingerprints ({security?.trustedFingerprints.length ?? 0})</span>
+              <span className="security-label">
+                Trusted peer fingerprints (
+                {security?.trustedFingerprints.length ?? 0})
+              </span>
               {security && security.trustedFingerprints.length > 0 ? (
                 security.trustedFingerprints.map((fingerprint) => (
                   <div className="trusted-peer-row" key={fingerprint}>
@@ -569,7 +818,10 @@ function App() {
                   </div>
                 ))
               ) : (
-                <div className="empty-state compact">No trusted peers yet. Add the other device's verified fingerprint on both devices.</div>
+                <div className="empty-state compact">
+                  No trusted peers yet. Add the other device's verified
+                  fingerprint on both devices.
+                </div>
               )}
             </div>
           </article>
@@ -582,24 +834,55 @@ function App() {
                 <span className="eyebrow">PEER DIRECTORY</span>
                 <h2>Connected peers</h2>
               </div>
-              <button className="button button-quiet button-small" onClick={() => void runAction("peer-refresh", async () => setPeers(await window.p2p.peer.list()))} disabled={backend.status !== "READY"}>
+              <button
+                className="button button-quiet button-small"
+                onClick={() =>
+                  void runAction("peer-refresh", async () =>
+                    setPeers(await window.p2p.peer.list()),
+                  )
+                }
+                disabled={backend.status !== "READY"}
+              >
                 Refresh
               </button>
             </div>
 
             {peers.length === 0 ? (
-              <div className="empty-state">No peers have been discovered yet. Connect to a peer by IP address and port.</div>
+              <div className="empty-state">
+                No peers have been discovered yet. Connect to a peer by IP
+                address and port.
+              </div>
             ) : (
               <div className="peer-list">
                 {peers.map((item) => (
                   <div className="peer-row" key={item.peerId}>
-                    <div className="peer-avatar">{item.host.slice(0, 1).toUpperCase()}</div>
+                    <div className="peer-avatar">
+                      {item.host.slice(0, 1).toUpperCase()}
+                    </div>
                     <div className="peer-main">
-                      <strong>{item.host}:{item.port}</strong>
+                      <strong>
+                        {item.host}:{item.port}
+                      </strong>
                       <code>{item.peerId}</code>
                     </div>
-                    <span className={"state-chip " + (item.status === "CONNECTED" ? "state-running" : "state-idle")}>{item.status}</span>
-                    <button className="button button-quiet button-small" onClick={() => handleDisconnect(item.peerId)} disabled={item.status !== "CONNECTED" || busy["peer-disconnect-" + item.peerId]}>
+                    <span
+                      className={
+                        "state-chip " +
+                        (item.status === "CONNECTED"
+                          ? "state-running"
+                          : "state-idle")
+                      }
+                    >
+                      {item.status}
+                    </span>
+                    <button
+                      className="button button-quiet button-small"
+                      onClick={() => handleDisconnect(item.peerId)}
+                      disabled={
+                        item.status !== "CONNECTED" ||
+                        busy["peer-disconnect-" + item.peerId]
+                      }
+                    >
                       Disconnect
                     </button>
                   </div>
@@ -614,7 +897,11 @@ function App() {
                 <span className="eyebrow">LOCAL STORAGE</span>
                 <h2>Shared directory</h2>
               </div>
-              <button className="button button-secondary button-small" onClick={handleChooseDirectory} disabled={backend.status !== "READY" || busy["share-directory"]}>
+              <button
+                className="button button-secondary button-small"
+                onClick={handleChooseDirectory}
+                disabled={backend.status !== "READY" || busy["share-directory"]}
+              >
                 {busy["share-directory"] ? "Opening…" : "Choose folder"}
               </button>
             </div>
@@ -622,9 +909,14 @@ function App() {
               <span className="folder-icon">▰</span>
               <span>{directory?.path ?? "No directory selected"}</span>
             </div>
-            <div className="section-caption">{localFiles.length} local file(s) available to connected peers</div>
+            <div className="section-caption">
+              {localFiles.length} local file(s) available to connected peers
+            </div>
             {localFiles.length === 0 ? (
-              <div className="empty-state compact">Choose a folder with files to share. Only supported top-level regular files are listed.</div>
+              <div className="empty-state compact">
+                Choose a folder with files to share. Only supported top-level
+                regular files are listed.
+              </div>
             ) : (
               <div className="file-list">
                 {localFiles.slice(0, 8).map((file) => (
@@ -634,7 +926,11 @@ function App() {
                     <span className="file-size">{formatBytes(file.size)}</span>
                   </div>
                 ))}
-                {localFiles.length > 8 && <div className="more-row">+ {localFiles.length - 8} more file(s)</div>}
+                {localFiles.length > 8 && (
+                  <div className="more-row">
+                    + {localFiles.length - 8} more file(s)
+                  </div>
+                )}
               </div>
             )}
           </article>
@@ -648,45 +944,83 @@ function App() {
               <span className="metric">{searchResults.length} result(s)</span>
             </div>
             <form className="search-form" onSubmit={handleSearch}>
-              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search by file name…" disabled={backend.status !== "READY"} />
-              <button className="button button-primary" type="submit" disabled={backend.status !== "READY" || peer?.status !== "RUNNING" || busy["file-search"]}>
+              <input
+                value={keyword}
+                onChange={(event) => setKeyword(event.target.value)}
+                placeholder="Search by file name…"
+                disabled={backend.status !== "READY"}
+              />
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={
+                  backend.status !== "READY" ||
+                  peer?.status !== "RUNNING" ||
+                  busy["file-search"]
+                }
+              >
                 {busy["file-search"] ? "Searching…" : "Search"}
               </button>
             </form>
             {searchErrors.length > 0 && (
               <div className="inline-warning">
-                {searchErrors.length} peer(s) could not be refreshed. Successful results are still shown.
+                {searchErrors.length} peer(s) could not be refreshed. Successful
+                results are still shown.
               </div>
             )}
             {searchResults.length === 0 ? (
-              <div className="empty-state compact">Search connected peers to browse files available for download.</div>
+              <div className="empty-state compact">
+                Search connected peers to browse files available for download.
+              </div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>File</th><th>Source peer</th><th>Size</th><th /></tr>
+                    <tr>
+                      <th>File</th>
+                      <th>Source peer</th>
+                      <th>Size</th>
+                      <th />
+                    </tr>
                   </thead>
                   <tbody>
                     {searchResults.map((file) => (
                       <tr key={file.peerId + ":" + file.fileName}>
                         <td className="file-name-cell">{file.fileName}</td>
-                        <td><span className="source-address">{file.host}:{file.port}</span></td>
+                        <td>
+                          <span className="source-address">
+                            {file.host}:{file.port}
+                          </span>
+                        </td>
                         <td className="file-size">{formatBytes(file.size)}</td>
                         <td className="action-cell">
                           <button
                             className="button button-secondary button-small"
                             onClick={() => handleDownload(file)}
-                            disabled={backend.status !== "READY" || busy["download-" + file.fileName]}
+                            disabled={
+                              backend.status !== "READY" ||
+                              busy["download-" + file.fileName]
+                            }
                           >
                             {matchingSourceIds(file).length > 1
-                              ? "Multi-source (" + matchingSourceIds(file).length + ")"
+                              ? "Multi-source (" +
+                                matchingSourceIds(file).length +
+                                ")"
                               : "Download"}
                           </button>
                           {matchingSourceIds(file).length > 1 && (
                             <button
                               className="button button-quiet button-small"
                               onClick={() => handleDownloadFromThisPeer(file)}
-                              disabled={backend.status !== "READY" || busy["download-single-" + file.peerId + "-" + file.fileName]}
+                              disabled={
+                                backend.status !== "READY" ||
+                                busy[
+                                  "download-single-" +
+                                    file.peerId +
+                                    "-" +
+                                    file.fileName
+                                ]
+                              }
                             >
                               This peer only
                             </button>
@@ -707,48 +1041,104 @@ function App() {
                 <h2>Downloads</h2>
               </div>
               <div className="form-actions">
-                <button className="button button-quiet button-small" onClick={handleFindResumable} disabled={backend.status !== "READY" || busy["transfer-resumable"]}>
+                <button
+                  className="button button-quiet button-small"
+                  onClick={handleFindResumable}
+                  disabled={
+                    backend.status !== "READY" || busy["transfer-resumable"]
+                  }
+                >
                   Find interrupted
                 </button>
-                <button className="button button-quiet button-small" onClick={() => void runAction("transfer-refresh", async () => setTransfers(await window.p2p.transfer.list()))} disabled={backend.status !== "READY"}>
+                <button
+                  className="button button-quiet button-small"
+                  onClick={() =>
+                    void runAction("transfer-refresh", async () =>
+                      setTransfers(await window.p2p.transfer.list()),
+                    )
+                  }
+                  disabled={backend.status !== "READY"}
+                >
                   Refresh
                 </button>
               </div>
             </div>
             {transfers.length === 0 ? (
-              <div className="empty-state compact">Download tasks and their progress will appear here.</div>
+              <div className="empty-state compact">
+                Download tasks and their progress will appear here.
+              </div>
             ) : (
               <div className="transfer-list">
                 {transfers.map((transfer) => {
-                  const percent = transfer.totalBytes > 0
-                    ? Math.min(100, transfer.receivedBytes / transfer.totalBytes * 100)
-                    : transfer.status === "COMPLETED" ? 100 : 0;
-                  const terminal = ["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(transfer.status);
+                  const percent =
+                    transfer.totalBytes > 0
+                      ? Math.min(
+                          100,
+                          (transfer.receivedBytes / transfer.totalBytes) * 100,
+                        )
+                      : transfer.status === "COMPLETED"
+                        ? 100
+                        : 0;
+                  const terminal = [
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED",
+                    "PAUSED",
+                  ].includes(transfer.status);
                   return (
                     <div className="transfer-row" key={transfer.taskId}>
                       <div className="transfer-topline">
                         <div>
-                          <strong>{transfer.targetFileName || transfer.fileName}</strong>
+                          <strong>
+                            {transfer.targetFileName || transfer.fileName}
+                          </strong>
                           <span>{transfer.detail}</span>
-                          {transfer.sourcePeerIds && transfer.sourcePeerIds.length > 0 && (
-                            <span>{transfer.sourcePeerIds.length} source peer(s)
-                              {typeof transfer.totalChunks === "number" && transfer.totalChunks > 0
-                                ? " · " + (transfer.completedChunks ?? 0) + "/" + transfer.totalChunks + " ranges"
-                                : ""}
-                            </span>
-                          )}
+                          {transfer.sourcePeerIds &&
+                            transfer.sourcePeerIds.length > 0 && (
+                              <span>
+                                {transfer.sourcePeerIds.length} source peer(s)
+                                {typeof transfer.totalChunks === "number" &&
+                                transfer.totalChunks > 0
+                                  ? " · " +
+                                    (transfer.completedChunks ?? 0) +
+                                    "/" +
+                                    transfer.totalChunks +
+                                    " ranges"
+                                  : ""}
+                              </span>
+                            )}
                         </div>
-                        <span className={"state-chip " + (transfer.status === "COMPLETED" ? "state-running" : "state-idle")}>
+                        <span
+                          className={
+                            "state-chip " +
+                            (transfer.status === "COMPLETED"
+                              ? "state-running"
+                              : "state-idle")
+                          }
+                        >
                           {transfer.status}
                         </span>
                       </div>
                       <div className="progress-track">
-                        <div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} />
+                        <div
+                          className="progress-fill"
+                          style={{ width: percent.toFixed(1) + "%" }}
+                        />
                       </div>
                       <div className="transfer-bottomline">
-                        <span>{formatBytes(transfer.receivedBytes)} / {formatBytes(transfer.totalBytes)} · {percent.toFixed(1)}%</span>
+                        <span>
+                          {formatBytes(transfer.receivedBytes)} /{" "}
+                          {formatBytes(transfer.totalBytes)} ·{" "}
+                          {percent.toFixed(1)}%
+                        </span>
                         {!terminal && (
-                          <button className="text-button" onClick={() => handleCancelTransfer(transfer.taskId)} disabled={busy["cancel-" + transfer.taskId]}>
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              handleCancelTransfer(transfer.taskId)
+                            }
+                            disabled={busy["cancel-" + transfer.taskId]}
+                          >
                             Cancel
                           </button>
                         )}
@@ -762,25 +1152,44 @@ function App() {
               <div className="transfer-list resumable-list">
                 <div className="eyebrow">INTERRUPTED DOWNLOADS</div>
                 {resumableDownloads.map((item) => {
-                  const percent = item.totalBytes > 0
-                    ? Math.min(100, item.receivedBytes / item.totalBytes * 100)
-                    : 0;
+                  const percent =
+                    item.totalBytes > 0
+                      ? Math.min(
+                          100,
+                          (item.receivedBytes / item.totalBytes) * 100,
+                        )
+                      : 0;
                   return (
                     <div className="transfer-row" key={item.taskId}>
                       <div className="transfer-topline">
                         <div>
                           <strong>{item.targetFileName}</strong>
-                          <span>{item.completedChunks}/{item.totalChunks} verified ranges saved</span>
+                          <span>
+                            {item.completedChunks}/{item.totalChunks} verified
+                            ranges saved
+                          </span>
                         </div>
                         <span className="state-chip state-idle">PAUSED</span>
                       </div>
                       <div className="progress-track">
-                        <div className="progress-fill" style={{ width: percent.toFixed(1) + "%" }} />
+                        <div
+                          className="progress-fill"
+                          style={{ width: percent.toFixed(1) + "%" }}
+                        />
                       </div>
                       <div className="transfer-bottomline">
-                        <span>{formatBytes(item.receivedBytes)} / {formatBytes(item.totalBytes)} · {percent.toFixed(1)}%</span>
-                        <button className="text-button" onClick={() => handleResumeTransfer(item.taskId)}
-                          disabled={connectedPeers.length === 0 || busy["resume-" + item.taskId]}>
+                        <span>
+                          {formatBytes(item.receivedBytes)} /{" "}
+                          {formatBytes(item.totalBytes)} · {percent.toFixed(1)}%
+                        </span>
+                        <button
+                          className="text-button"
+                          onClick={() => handleResumeTransfer(item.taskId)}
+                          disabled={
+                            connectedPeers.length === 0 ||
+                            busy["resume-" + item.taskId]
+                          }
+                        >
                           Resume
                         </button>
                       </div>
@@ -797,16 +1206,32 @@ function App() {
                 <span className="eyebrow">SYSTEM EVENTS</span>
                 <h2>Recent activity</h2>
               </div>
-              <button className="button button-quiet button-small" onClick={() => setActivities([])}>Clear visible</button>
+              <button
+                className="button button-quiet button-small"
+                onClick={() => setActivities([])}
+              >
+                Clear visible
+              </button>
             </div>
             {activities.length === 0 ? (
-              <div className="empty-state compact">Connection, transfer and backend events will be recorded here.</div>
+              <div className="empty-state compact">
+                Connection, transfer and backend events will be recorded here.
+              </div>
             ) : (
               <div className="activity-list">
                 {activities.map((activity) => (
                   <div className="activity-row" key={activity.id}>
-                    <span className={"activity-dot level-" + activity.level.toLowerCase()} />
-                    <span className="activity-message"><span className="activity-category">{activity.category}</span>{activity.message}</span>
+                    <span
+                      className={
+                        "activity-dot level-" + activity.level.toLowerCase()
+                      }
+                    />
+                    <span className="activity-message">
+                      <span className="activity-category">
+                        {activity.category}
+                      </span>
+                      {activity.message}
+                    </span>
                     <time>{activity.time}</time>
                   </div>
                 ))}
@@ -846,13 +1271,20 @@ function formatBytes(value: number): string {
     return "0 B";
   }
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  return (value / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1) + " " + (units[index] ?? "B");
+  const index = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1,
+  );
+  return (
+    (value / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1) +
+    " " +
+    (units[index] ?? "B")
+  );
 }
 
 function mergeTransferProgress(
   current: TransferSnapshot[],
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ): TransferSnapshot[] {
   if (typeof data.taskId !== "string") {
     return current;
@@ -861,20 +1293,34 @@ function mergeTransferProgress(
   if (!existing) {
     return current;
   }
-  return current.map((item) => item.taskId === data.taskId
-    ? {
-        ...item,
-        receivedBytes: typeof data.receivedBytes === "number" ? data.receivedBytes : item.receivedBytes,
-        totalBytes: typeof data.totalBytes === "number" ? data.totalBytes : item.totalBytes,
-        completedChunks: typeof data.completedChunks === "number" ? data.completedChunks : item.completedChunks,
-        totalChunks: typeof data.totalChunks === "number" ? data.totalChunks : item.totalChunks
-      }
-    : item);
+  return current.map((item) =>
+    item.taskId === data.taskId
+      ? {
+          ...item,
+          receivedBytes:
+            typeof data.receivedBytes === "number"
+              ? data.receivedBytes
+              : item.receivedBytes,
+          totalBytes:
+            typeof data.totalBytes === "number"
+              ? data.totalBytes
+              : item.totalBytes,
+          completedChunks:
+            typeof data.completedChunks === "number"
+              ? data.completedChunks
+              : item.completedChunks,
+          totalChunks:
+            typeof data.totalChunks === "number"
+              ? data.totalChunks
+              : item.totalChunks,
+        }
+      : item,
+  );
 }
 
 function mergeTransferSnapshot(
   current: TransferSnapshot[],
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ): TransferSnapshot[] {
   if (typeof data.taskId !== "string") {
     return current;
@@ -882,7 +1328,9 @@ function mergeTransferSnapshot(
   const next = data as unknown as TransferSnapshot;
   const existing = current.some((item) => item.taskId === next.taskId);
   return existing
-    ? current.map((item) => item.taskId === next.taskId ? { ...item, ...next } : item)
+    ? current.map((item) =>
+        item.taskId === next.taskId ? { ...item, ...next } : item,
+      )
     : [next, ...current];
 }
 

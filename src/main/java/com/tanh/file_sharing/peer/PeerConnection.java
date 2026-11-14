@@ -1,12 +1,5 @@
 package com.tanh.file_sharing.peer;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.tanh.file_sharing.model.ConnectionDirection;
-import com.tanh.file_sharing.model.RemotePeerSnapshot;
-import com.tanh.file_sharing.protocol.FramedJsonChannel;
-import com.tanh.file_sharing.protocol.PeerProtocol;
-import com.tanh.file_sharing.sharing.SharedFileSource;
-
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -27,6 +20,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.tanh.file_sharing.model.ConnectionDirection;
+import com.tanh.file_sharing.model.RemotePeerSnapshot;
+import com.tanh.file_sharing.protocol.FramedJsonChannel;
+import com.tanh.file_sharing.protocol.PeerProtocol;
+import com.tanh.file_sharing.sharing.SharedFileSource;
 
 /** A fully handshaken TCP connection to one remote peer. */
 public final class PeerConnection {
@@ -49,7 +49,8 @@ public final class PeerConnection {
     private final Map<String, BlockingQueue<JsonNode>> incomingTransfers = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> outboundTransfers = new ConcurrentHashMap<>();
     private final Semaphore requestSlots = new Semaphore(8);
-    private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean(
+            false);
     private volatile ExecutorService requestExecutor;
 
     public PeerConnection(
@@ -162,7 +163,8 @@ public final class PeerConnection {
             if (cause instanceof PeerException peerException) {
                 throw peerException;
             }
-            throw new PeerException("PEER_NOT_CONNECTED", "The peer connection closed before a response arrived.", cause);
+            throw new PeerException("PEER_NOT_CONNECTED", "The peer connection closed before a response arrived.",
+                    cause);
         } catch (IOException exception) {
             throw new PeerException("PEER_IO_ERROR", "Could not send a request to the peer.", exception);
         } finally {
@@ -170,7 +172,10 @@ public final class PeerConnection {
         }
     }
 
-    /** Queries the source's immutable metadata snapshot before planning ranged downloads. */
+    /**
+     * Queries the source's immutable metadata snapshot before planning ranged
+     * downloads.
+     */
     public FileMetadata requestFileInfo(String fileName) {
         if (fileName == null || fileName.isBlank()) {
             throw new PeerException("INVALID_ARGUMENT", "A file name is required.");
@@ -230,7 +235,8 @@ public final class PeerConnection {
             try {
                 response = metadataFuture.get(metadataTimeoutMillis, TimeUnit.MILLISECONDS);
             } catch (TimeoutException exception) {
-                throw new PeerException("PEER_REQUEST_TIMEOUT", "The peer did not accept the requested file range in time.", exception);
+                throw new PeerException("PEER_REQUEST_TIMEOUT",
+                        "The peer did not accept the requested file range in time.", exception);
             } catch (ExecutionException exception) {
                 Throwable cause = exception.getCause();
                 if (cause instanceof PeerException peerException) {
@@ -286,8 +292,7 @@ public final class PeerConnection {
 
                 JsonNode frame = frames.poll(200, TimeUnit.MILLISECONDS);
                 if (frame == null) {
-                    if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastFrameAt)
-                            > TRANSFER_IDLE_TIMEOUT_MILLIS) {
+                    if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastFrameAt) > TRANSFER_IDLE_TIMEOUT_MILLIS) {
                         sendCancelTransfer(requestId);
                         throw new PeerException("TRANSFER_TIMEOUT", "No range data arrived for 30 seconds.");
                     }
@@ -313,7 +318,8 @@ public final class PeerConnection {
                     try {
                         bytes = Base64.getDecoder().decode(dataNode.asText());
                     } catch (IllegalArgumentException exception) {
-                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent invalid base64 range data.", exception);
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent invalid base64 range data.",
+                                exception);
                     }
                     if (bytes.length < 1 || bytes.length > MAX_FILE_CHUNK_BYTES
                             || receivedBytes + bytes.length > length) {
@@ -392,7 +398,8 @@ public final class PeerConnection {
             try {
                 response = metadataFuture.get(metadataTimeoutMillis, TimeUnit.MILLISECONDS);
             } catch (TimeoutException exception) {
-                throw new PeerException("PEER_REQUEST_TIMEOUT", "The peer did not provide file metadata in time.", exception);
+                throw new PeerException("PEER_REQUEST_TIMEOUT", "The peer did not provide file metadata in time.",
+                        exception);
             } catch (ExecutionException exception) {
                 Throwable cause = exception.getCause();
                 if (cause instanceof PeerException peerException) {
@@ -444,8 +451,7 @@ public final class PeerConnection {
 
                 JsonNode frame = frames.poll(200, TimeUnit.MILLISECONDS);
                 if (frame == null) {
-                    if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastFrameAt)
-                            > TRANSFER_IDLE_TIMEOUT_MILLIS) {
+                    if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastFrameAt) > TRANSFER_IDLE_TIMEOUT_MILLIS) {
                         sendCancelTransfer(requestId);
                         throw new PeerException("TRANSFER_TIMEOUT", "No file data arrived for 30 seconds.");
                     }
@@ -471,7 +477,8 @@ public final class PeerConnection {
                     try {
                         bytes = Base64.getDecoder().decode(dataNode.asText());
                     } catch (IllegalArgumentException exception) {
-                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an invalid base64 chunk.", exception);
+                        throw new PeerException("INVALID_PEER_RESPONSE", "The peer sent an invalid base64 chunk.",
+                                exception);
                     }
                     if (bytes.length < 1 || bytes.length > MAX_FILE_CHUNK_BYTES
                             || receivedBytes + bytes.length > metadata.size()) {
@@ -537,7 +544,9 @@ public final class PeerConnection {
         finishClose(true);
     }
 
-    /** Closes without sending a close frame (used for rejected/replaced sockets). */
+    /**
+     * Closes without sending a close frame (used for rejected/replaced sockets).
+     */
     public void closeSilently() {
         finishClose(false);
     }
@@ -789,7 +798,8 @@ public final class PeerConnection {
                 writeErrorResponse(requestId, "FILE_UNAVAILABLE", "The requested file is unavailable.");
             }
         } catch (RuntimeException exception) {
-            LOGGER.log(Level.WARNING, "Could not stream file '" + nameNode.asText() + "' to peer " + remotePeerId, exception);
+            LOGGER.log(Level.WARNING, "Could not stream file '" + nameNode.asText() + "' to peer " + remotePeerId,
+                    exception);
             if (metadataSent) {
                 writeFileEndError(requestId, sentBytes, "INTERNAL_ERROR", "The source could not finish the transfer.");
             } else {

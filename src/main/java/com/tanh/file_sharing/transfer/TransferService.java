@@ -1,17 +1,7 @@
 package com.tanh.file_sharing.transfer;
 
-import com.tanh.file_sharing.event.EventPublisher;
-import com.tanh.file_sharing.model.DownloadAccepted;
-import com.tanh.file_sharing.model.TransferSnapshot;
-import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
-import com.tanh.file_sharing.model.TransferStatus;
-import com.tanh.file_sharing.peer.PeerConnection;
-import com.tanh.file_sharing.peer.PeerException;
-import com.tanh.file_sharing.sharing.SharedDirectoryService;
-
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.FileAlreadyExistsException;
@@ -19,15 +9,14 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,11 +28,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import com.tanh.file_sharing.event.EventPublisher;
+import com.tanh.file_sharing.model.DownloadAccepted;
+import com.tanh.file_sharing.model.ResumableDownloadSnapshot;
+import com.tanh.file_sharing.model.TransferSnapshot;
+import com.tanh.file_sharing.model.TransferStatus;
+import com.tanh.file_sharing.peer.PeerConnection;
+import com.tanh.file_sharing.peer.PeerException;
+import com.tanh.file_sharing.sharing.SharedDirectoryService;
 
 /**
  * Coordinates asynchronous downloads, destination-name allocation, integrity
@@ -162,7 +159,9 @@ public final class TransferService implements AutoCloseable {
         return new DownloadAccepted(task.taskId, task.targetFileName, task.status);
     }
 
-    /** Lists valid interrupted downloads in a user-selected destination directory. */
+    /**
+     * Lists valid interrupted downloads in a user-selected destination directory.
+     */
     public List<ResumableDownloadSnapshot> listResumableDownloads(String rawDirectory) {
         Path directory = resolveDestination(rawDirectory);
         List<ResumableDownloadSnapshot> snapshots = new ArrayList<>();
@@ -194,7 +193,10 @@ public final class TransferService implements AutoCloseable {
         return List.copyOf(snapshots);
     }
 
-    /** Resumes only ranges whose saved per-range hashes still match the partial file. */
+    /**
+     * Resumes only ranges whose saved per-range hashes still match the partial
+     * file.
+     */
     public DownloadAccepted resume(UUID taskId, List<UUID> candidatePeerIds, String rawDirectory) {
         if (taskId == null || candidatePeerIds == null || candidatePeerIds.isEmpty()
                 || candidatePeerIds.size() > MAX_MULTI_SOURCE_PEERS
@@ -307,7 +309,10 @@ public final class TransferService implements AutoCloseable {
                 .toList();
     }
 
-    /** Cancels all active tasks and waits for their workers to release files/sockets. */
+    /**
+     * Cancels all active tasks and waits for their workers to release
+     * files/sockets.
+     */
     public boolean cancelAllAndAwait(long timeoutMillis) {
         List<DownloadTask> active = tasks.values().stream()
                 .filter(task -> task.finished.getCount() > 0)
@@ -322,7 +327,8 @@ public final class TransferService implements AutoCloseable {
                         task.worker.interrupt();
                     }
                     publishStatus(task, task.detail);
-                    publishActivity("Download cancelled because the local peer is stopping: " + task.targetFileName, "WARN");
+                    publishActivity("Download cancelled because the local peer is stopping: " + task.targetFileName,
+                            "WARN");
                 }
             }
         }
@@ -533,7 +539,7 @@ public final class TransferService implements AutoCloseable {
                 .toList();
         if (task.resumeManifest != null
                 && (metadata.size() != task.resumeManifest.totalBytes()
-                || !metadata.sha256().equalsIgnoreCase(task.resumeManifest.sha256()))) {
+                        || !metadata.sha256().equalsIgnoreCase(task.resumeManifest.sha256()))) {
             throw new PeerException("SOURCE_MISMATCH",
                     "The connected peers no longer have the exact file version saved for this interrupted download.");
         }
@@ -563,7 +569,7 @@ public final class TransferService implements AutoCloseable {
         try (FileChannel output = FileChannel.open(task.partPath, StandardOpenOption.WRITE)) {
             if (metadata.size() > 0 && output.size() < metadata.size()) {
                 output.position(metadata.size() - 1);
-                output.write(ByteBuffer.wrap(new byte[] {0}));
+                output.write(ByteBuffer.wrap(new byte[] { 0 }));
                 output.force(true);
             }
             task.completedChunks = task.resumeManifest.completedChunks();
@@ -665,7 +671,7 @@ public final class TransferService implements AutoCloseable {
             }
 
             try {
-                long[] nextWritePosition = {offset};
+                long[] nextWritePosition = { offset };
                 connection.downloadFileRange(metadata, offset, length, new PeerConnection.DownloadSink() {
                     @Override
                     public void onMetadata(PeerConnection.FileMetadata received) {
@@ -679,7 +685,8 @@ public final class TransferService implements AutoCloseable {
                     public void onChunk(byte[] bytes) throws IOException {
                         if (task.cancelled.get() || task.pauseRequested.get()
                                 || Thread.currentThread().isInterrupted()) {
-                            throw new PeerException("TRANSFER_CANCELLED", "The range transfer was cancelled or paused.");
+                            throw new PeerException("TRANSFER_CANCELLED",
+                                    "The range transfer was cancelled or paused.");
                         }
                         ByteBuffer buffer = ByteBuffer.wrap(bytes);
                         long position = nextWritePosition[0];
@@ -873,7 +880,8 @@ public final class TransferService implements AutoCloseable {
                 } catch (FileAlreadyExistsException ignored) {
                     // A stale temporary file belongs to another task or process.
                 } catch (IOException exception) {
-                    throw new PeerException("INVALID_DESTINATION", "Could not create a temporary download file.", exception);
+                    throw new PeerException("INVALID_DESTINATION", "Could not create a temporary download file.",
+                            exception);
                 }
             }
         }
