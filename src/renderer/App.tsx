@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type {
   BackendEvent,
   BackendStatusSnapshot,
@@ -621,24 +621,52 @@ function App() {
 }
 
 function Icon({ name }: { name: string }) {
-  const glyphs: Record<string, string> = {
-    search: "⌕", x: "×", refresh: "↻", plus: "+", home: "⌂", folder: "▱", users: "♧",
-    monitor: "▣", transfer: "⇄", clock: "◷", shield: "◇", settings: "⚙", alert: "!",
-    check: "✓", info: "i", chevron: "›", arrow: "↗", file: "▤", download: "↓",
-    activity: "⌁", pause: "Ⅱ", list: "☷", grid: "▦", more: "⋮"
+  const glyphs: Record<string, ReactNode> = {
+    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
+    x: <path d="m6 6 12 12M18 6 6 18" />,
+    refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7.5 7.5 0 1 1-2-5.1L20 12" /></>,
+    plus: <path d="M12 5v14M5 12h14" />,
+    home: <><path d="m3 10 9-7 9 7" /><path d="M5.5 9v11h13V9M9.5 20v-6h5v6" /></>,
+    folder: <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />,
+    users: <><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20" /><circle cx="10" cy="8" r="3.2" /><path d="M17 4.8a3.3 3.3 0 0 1 0 6.4M20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4" /></>,
+    monitor: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></>,
+    transfer: <><path d="M7 7h13l-3.5-3.5M20 7l-3.5 3.5" /><path d="M17 17H4l3.5-3.5M4 17l3.5 3.5" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>,
+    shield: <><path d="M12 22s8-3.8 8-10V5l-8-3-8 3v7c0 6.2 8 10 8 10Z" /><path d="m9 12 2 2 4-4" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z" transform="translate(-1 -1) scale(1.08)" /></>,
+    alert: <><path d="M12 3 2.7 19.2A1.2 1.2 0 0 0 3.8 21h16.4a1.2 1.2 0 0 0 1.1-1.8Z" /><path d="M12 9v4.5M12 17h.01" /></>,
+    check: <path d="m5 12.5 4.3 4.2L19 7" />,
+    info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.5h.01" /></>,
+    chevron: <path d="m9 5 7 7-7 7" />,
+    arrow: <><path d="M7 17 17 7M8 7h9v9" /></>,
+    file: <><path d="M6 3h8l5 5v13H6z" /><path d="M14 3v5h5M9 13h7M9 17h7" /></>,
+    download: <><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 20h14" /></>,
+    activity: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+    pause: <><path d="M8 5v14M16 5v14" /></>,
+    list: <><path d="M9 6h12M9 12h12M9 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" /></>,
+    grid: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
+    more: <><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></>
   };
-  return <span className="ui-glyph" aria-hidden="true">{glyphs[name] ?? "•"}</span>;
+  return (
+    <span className="ui-glyph" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {glyphs[name] ?? <circle cx="12" cy="12" r="2" />}
+      </svg>
+    </span>
+  );
 }
 
 function FileTypeIcon({ name, large = false }: { name: string; large?: boolean }) {
   const lower = name.toLowerCase();
+  const extension = lower.split(".").pop() ?? "file";
   const kind = /\.(png|jpe?g|gif|webp|svg|heic)$/.test(lower) ? "image"
     : /\.(zip|7z|rar|tar|gz)$/.test(lower) ? "archive"
     : /\.(xls|xlsx|csv)$/.test(lower) ? "sheet"
     : /\.(ppt|pptx)$/.test(lower) ? "slide"
     : /\.(js|jsx|ts|tsx|java|kt|py|json|html|css|xml)$/.test(lower) ? "code" : "document";
-  const mark = kind === "image" ? "▧" : kind === "sheet" ? "▦" : kind === "code" ? "{ }" : kind === "archive" ? "▤" : kind === "slide" ? "▥" : "▤";
-  return <span className={"file-type " + kind + (large ? " large" : "")}>{mark}</span>;
+  const mark = kind === "image" ? "IMG" : kind === "sheet" ? "XLS" : kind === "code" ? extension.slice(0, 3).toUpperCase()
+    : kind === "archive" ? "ZIP" : kind === "slide" ? "PPT" : extension === "pdf" ? "PDF" : "DOC";
+  return <span className={"file-type " + kind + (large ? " large" : "")} aria-hidden="true"><span>{mark}</span></span>;
 }
 
 function Empty({ icon, title, detail, action, onAction }: { icon: string; title: string; detail: string; action?: string; onAction?: () => void }) {
