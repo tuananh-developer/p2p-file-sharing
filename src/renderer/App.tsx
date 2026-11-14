@@ -19,7 +19,7 @@ import {
   type InternetTransferProgress
 } from "./internetPeer";
 
-type DrivePage = "home" | "my-files" | "shared" | "devices" | "transfers" | "recent" | "security" | "settings";
+type WorkspacePage = "home" | "my-files" | "shared" | "devices" | "transfers" | "recent" | "security" | "settings";
 
 interface ActivityItem {
   id: string;
@@ -31,7 +31,7 @@ interface ActivityItem {
 
 function App() {
   const [backend, setBackend] = useState<BackendStatusSnapshot>({ status: "STARTING" });
-  const [activePage, setActivePage] = useState<DrivePage>("home");
+  const [activePage, setActivePage] = useState<WorkspacePage>("home");
   const [fileLayout, setFileLayout] = useState<"list" | "grid">("list");
   const [peer, setPeer] = useState<PeerSnapshot | null>(null);
   const [peers, setPeers] = useState<RemotePeerSnapshot[]>([]);
@@ -515,58 +515,128 @@ function App() {
     });
   };
 
-  const title = ({ home: "Home", "my-files": "My files", shared: "Shared with me", devices: "Devices", transfers: "Transfers", recent: "Recent", security: "Security", settings: "Settings" } as const)[activePage];
+  const title = ({ home: "Overview", "my-files": "Local library", shared: "Find files", devices: "Network", transfers: "Transfers", recent: "Activity log", security: "Trust & security", settings: "Preferences" } as const)[activePage]
   const activeTransferCount = transfers.filter((item) => !["COMPLETED", "FAILED", "CANCELLED", "PAUSED"].includes(item.status)).length;
   const completedTransfers = transfers.filter((item) => item.status === "COMPLETED").length;
 
   return (
-    <div className="drive-app">
-      <header className="drive-topbar">
-        <button className="brand-lockup" type="button" onClick={() => setActivePage("home")} aria-label="P2P Drive home"><span className="drive-logo"><i /><i /><i /></span><span>P2P Drive</span></button>
-        <form className="global-search" onSubmit={(event) => { handleSearch(event); setActivePage("shared"); }}>
-          <Icon name="search" /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search files on connected devices" aria-label="Search files on connected devices" disabled={backend.status !== "READY"} />
+    <div className="mesh-app">
+      <header className="mesh-topbar">
+        <button className="mesh-brand" type="button" onClick={() => setActivePage("home")} aria-label="Mesh home">
+          <span className="mesh-mark"><i /><i /><i /></span>
+          <span className="mesh-brand-copy"><b>MESH</b><small>PRIVATE FILE NETWORK</small></span>
+        </button>
+        <form className="mesh-search" onSubmit={(event) => { handleSearch(event); setActivePage("shared"); }}>
+          <Icon name="search" />
+          <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="Search across connected devices…" aria-label="Search files on connected devices" disabled={backend.status !== "READY"} />
           {keyword && <button type="button" className="icon-button" onClick={() => setKeyword("")} aria-label="Clear search"><Icon name="x" /></button>}
+          <kbd>↵</kbd>
         </form>
-        <div className="top-actions"><span className={"backend-state " + backend.status.toLowerCase()}><i />{backend.status === "READY" ? "Desktop ready" : backend.status}</span><button className="icon-button" type="button" onClick={() => void refreshAll()} disabled={backend.status !== "READY"} title="Refresh"><Icon name="refresh" /></button><span className="avatar">P</span></div>
+        <div className="mesh-top-actions">
+          <span className={"engine-status " + backend.status.toLowerCase()}><i />{backend.status === "READY" ? "Engine online" : backend.status}</span>
+          <button className="icon-button" type="button" onClick={() => void refreshAll()} disabled={backend.status !== "READY"} title="Refresh network"><Icon name="refresh" /></button>
+          <span className="mesh-avatar">M</span>
+        </div>
       </header>
 
-      <div className="drive-layout">
-        <aside className="sidebar">
-          <button className="new-button" type="button" onClick={handleChooseDirectory} disabled={backend.status !== "READY" || !!busy["share-directory"]}><Icon name="plus" /><span>Add shared folder</span></button>
-          <nav className="nav-list" aria-label="Main navigation">
-            {([{id:"home",label:"Home",icon:"home"},{id:"my-files",label:"My files",icon:"folder"},{id:"shared",label:"Shared with me",icon:"users"},{id:"devices",label:"Devices",icon:"monitor"},{id:"transfers",label:"Transfers",icon:"transfer"},{id:"recent",label:"Recent",icon:"clock"}] as const).map((item) => <button key={item.id} className={"nav-item " + (activePage === item.id ? "active" : "")} type="button" onClick={() => setActivePage(item.id)}><Icon name={item.icon} /><span>{item.label}</span>{item.id === "my-files" && localFiles.length > 0 && <small>{localFiles.length}</small>}{item.id === "devices" && connectedPeers.length > 0 && <small>{connectedPeers.length}</small>}{item.id === "transfers" && activeTransferCount > 0 && <i className="nav-dot" />}</button>)}
+      <div className="mesh-layout">
+        <aside className="mesh-sidebar">
+          <div className="side-section-label">WORKSPACE</div>
+          <nav className="side-nav" aria-label="Workspace navigation">
+            {([
+              { id: "home", label: "Overview", icon: "home" },
+              { id: "my-files", label: "Local library", icon: "folder" },
+              { id: "shared", label: "Find files", icon: "search" },
+              { id: "devices", label: "Network", icon: "nodes" },
+              { id: "transfers", label: "Transfers", icon: "transfer" }
+            ] as const).map((item) => (
+              <button key={item.id} className={"nav-item " + (activePage === item.id ? "active" : "")} type="button" onClick={() => setActivePage(item.id)}>
+                <Icon name={item.icon} /><span>{item.label}</span>
+                {item.id === "my-files" && localFiles.length > 0 && <small>{localFiles.length}</small>}
+                {item.id === "devices" && connectedPeers.length > 0 && <small>{connectedPeers.length}</small>}
+                {item.id === "transfers" && activeTransferCount > 0 && <i className="nav-dot" />}
+              </button>
+            ))}
           </nav>
-          <div className="nav-separator" /><span className="nav-caption">PREFERENCES</span>
-          <nav className="nav-list"><button className={"nav-item " + (activePage === "security" ? "active" : "")} type="button" onClick={() => setActivePage("security")}><Icon name="shield" /><span>Security</span></button><button className={"nav-item " + (activePage === "settings" ? "active" : "")} type="button" onClick={() => setActivePage("settings")}><Icon name="settings" /><span>Settings</span></button></nav>
+
+          <div className="side-section-label side-section-secondary">SYSTEM</div>
+          <nav className="side-nav" aria-label="System navigation">
+            <button className={"nav-item " + (activePage === "recent" ? "active" : "")} type="button" onClick={() => setActivePage("recent")}><Icon name="activity" /><span>Activity log</span></button>
+            <button className={"nav-item " + (activePage === "security" ? "active" : "")} type="button" onClick={() => setActivePage("security")}><Icon name="shield" /><span>Trust & security</span></button>
+            <button className={"nav-item " + (activePage === "settings" ? "active" : "")} type="button" onClick={() => setActivePage("settings")}><Icon name="settings" /><span>Preferences</span></button>
+          </nav>
+
           <div className="sidebar-spacer" />
-          <div className="folder-status"><div><Icon name="folder" /><strong>Shared folder</strong></div><p>{directory?.configured ? "Your folder is ready to share." : "Choose a folder to start sharing."}</p><button type="button" onClick={handleChooseDirectory} disabled={backend.status !== "READY"}>{directory?.configured ? "Change folder" : "Choose folder"}</button></div>
-          <div className="sidebar-foot"><i className={backend.status === "READY" ? "online" : ""} />Java Core · {backend.status}</div>
+          <section className="local-node-card">
+            <div className="node-card-top"><span className="node-pulse" /><span>LOCAL NODE</span><b className={peer?.status === "RUNNING" ? "online" : ""}>{peer?.status === "RUNNING" ? "ACTIVE" : "IDLE"}</b></div>
+            <div className="node-card-id">{peer?.peerId ? peer.peerId.slice(0, 16) + "…" : "Node not started"}</div>
+            <div className="node-card-meta"><span>JAVA CORE</span><span>{backend.status}</span></div>
+            <button type="button" onClick={() => setActivePage("devices")}>Manage node <Icon name="arrow" /></button>
+          </section>
+          <div className="sidebar-footer"><span className="footer-mark">M</span><span><b>Mesh workspace</b><small>Direct device-to-device</small></span></div>
         </aside>
 
-        <main className="workspace">
+        <main className="mesh-main">
           {backend.status !== "READY" && <div className="backend-banner"><Icon name="alert" /><div><strong>{backend.status === "STARTING" ? "Starting your desktop engine" : "Java Core is unavailable"}</strong><p>{backend.error ?? "Waiting for the local Java service to become ready."}</p></div>{backend.status === "FAILED" && <button className="button primary" onClick={handleRestartBackend} disabled={!!busy["backend-restart"]}>Try again</button>}</div>}
           {notice && <div className={"toast " + notice.kind}><Icon name={notice.kind === "error" ? "alert" : notice.kind === "success" ? "check" : "info"} /><span>{notice.message}</span><button className="icon-button" type="button" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon name="x" /></button></div>}
-          <div className="page-heading"><div><div className="breadcrumb">P2P Drive <Icon name="chevron" /> <b>{title}</b></div><h1>{title}</h1><p>{activePage === "home" ? "Your files and peer connections, all in one place." : activePage === "my-files" ? "Manage the files you share from this device." : activePage === "shared" ? "Browse and download files from connected peers." : activePage === "devices" ? "Connect nearby devices or create a secure Internet session." : activePage === "transfers" ? "Track downloads and manage active transfers." : activePage === "recent" ? "A timeline of connection and transfer activity." : activePage === "security" ? "Manage the identities trusted by this device." : "Configure local networking and Internet connectivity."}</p></div>
-            <div className="page-actions">{activePage === "my-files" && <button className="button primary" onClick={handleChooseDirectory} disabled={backend.status !== "READY"}><Icon name="plus" />Choose folder</button>}{activePage === "transfers" && <button className="button secondary" onClick={handleFindResumable} disabled={backend.status !== "READY" || !!busy["transfer-resumable"]}><Icon name="refresh" />Find interrupted</button>}{activePage === "devices" && <span className="state-chip"><i className={connectedPeers.length ? "online" : ""} />{connectedPeers.length} connected</span>}</div>
+
+          <div className="screen-heading">
+            <div>
+              <div className="screen-eyebrow"><span className="eyebrow-line" />{activePage === "home" ? "NETWORK OVERVIEW" : activePage === "my-files" ? "LOCAL STORAGE" : activePage === "shared" ? "PEER DISCOVERY" : activePage === "devices" ? "CONNECTION MANAGER" : activePage === "transfers" ? "TRANSFER CENTER" : activePage === "recent" ? "EVENT STREAM" : activePage === "security" ? "IDENTITY & TRUST" : "SYSTEM CONFIGURATION"}</div>
+              <h1>{title}</h1>
+              <p>{activePage === "home" ? "A live view of your private, peer-to-peer workspace." : activePage === "my-files" ? "Files exposed by this device to peers you trust." : activePage === "shared" ? "Discover files available from devices in your network." : activePage === "devices" ? "Bring devices together over LAN, VPN or the public Internet." : activePage === "transfers" ? "Monitor every incoming and outgoing file transfer." : activePage === "recent" ? "A local timeline of connection and transfer events." : activePage === "security" ? "Review the identities allowed to communicate with this device." : "Tune how this device participates in your private network."}</p>
+            </div>
+            <div className="page-actions">
+              {activePage === "my-files" && <button className="button primary" onClick={handleChooseDirectory} disabled={backend.status !== "READY"}><Icon name="plus" />Add shared folder</button>}
+              {activePage === "transfers" && <button className="button secondary" onClick={handleFindResumable} disabled={backend.status !== "READY" || !!busy["transfer-resumable"]}><Icon name="refresh" />Scan for partials</button>}
+              {activePage === "devices" && <span className="state-chip"><i className={connectedPeers.length ? "online" : ""} />{connectedPeers.length} peers online</span>}
+            </div>
           </div>
 
           {activePage === "home" && <div className="page-content">
-            <section className="welcome"><div><span className="kicker">YOUR PRIVATE FILE SPACE</span><h2>Everything you share,<br />in one place.</h2><p>Move files directly between your devices. No cloud storage required.</p><button className="button white" onClick={() => setActivePage("my-files")}><Icon name="folder" />Explore my files</button></div><div className="welcome-art"><span className="art-ring" /><span className="art-doc"><Icon name="file" /></span><span className="art-laptop"><Icon name="monitor" /></span><span className="art-spark" /></div></section>
-            <section className="stats-grid">
-              <button className="stat-card" onClick={() => setActivePage("my-files")}><span className="stat-icon blue"><Icon name="folder" /></span><span><b>{localFiles.length}</b><small>Shared files</small></span><Icon name="arrow" /></button>
-              <button className="stat-card" onClick={() => setActivePage("devices")}><span className="stat-icon green"><Icon name="monitor" /></span><span><b>{connectedPeers.length}</b><small>Connected devices</small></span><Icon name="arrow" /></button>
-              <button className="stat-card" onClick={() => setActivePage("transfers")}><span className="stat-icon yellow"><Icon name="transfer" /></span><span><b>{activeTransferCount}</b><small>Active transfers</small></span><Icon name="arrow" /></button>
-              <button className="stat-card" onClick={() => setActivePage("transfers")}><span className="stat-icon purple"><Icon name="check" /></span><span><b>{completedTransfers}</b><small>Completed downloads</small></span><Icon name="arrow" /></button>
+            <section className="network-hero">
+              <div className="hero-copy">
+                <div className="hero-kicker"><span className="hero-kicker-dot" /> PRIVATE BY DESIGN <span className="hero-kicker-divider">/</span> PEER TO PEER</div>
+                <h2>Your devices.<br /><em>One private network.</em></h2>
+                <p>Move files directly between trusted devices. Your data travels peer to peer, not through a cloud drive.</p>
+                <div className="hero-actions">
+                  <button className="button hero-primary" onClick={() => setActivePage("devices")}><Icon name="nodes" />Open network <Icon name="arrow" /></button>
+                  <button className="button hero-quiet" onClick={() => setActivePage("my-files")}><Icon name="folder" />Browse library</button>
+                </div>
+              </div>
+              <div className="topology-panel" aria-label="Network topology illustration">
+                <div className="topology-orbit orbit-outer" />
+                <div className="topology-orbit orbit-inner" />
+                <svg className="topology-lines" viewBox="0 0 420 260" aria-hidden="true">
+                  <path d="M210 130 L91 58 M210 130 L329 58 M210 130 L92 211 M210 130 L330 211" />
+                  <circle cx="91" cy="58" r="3" /><circle cx="329" cy="58" r="3" /><circle cx="92" cy="211" r="3" /><circle cx="330" cy="211" r="3" />
+                </svg>
+                <div className="topology-core"><span className="core-halo" /><Icon name="monitor" /><b>THIS DEVICE</b><small>{peer?.status === "RUNNING" ? "LISTENING" : "NOT LISTENING"}</small></div>
+                <div className="topology-node node-a"><Icon name="laptop" /><span>{connectedPeers[0] ? "PEER 01" : "PEER SLOT 01"}</span><small>{connectedPeers[0] ? "CONNECTED" : "AVAILABLE"}</small></div>
+                <div className="topology-node node-b"><Icon name="phone" /><span>{connectedPeers[1] ? "PEER 02" : "PEER SLOT 02"}</span><small>{connectedPeers[1] ? "CONNECTED" : "AVAILABLE"}</small></div>
+                <div className="topology-node node-c"><Icon name="server" /><span>{connectedPeers[2] ? "PEER 03" : "PEER SLOT 03"}</span><small>{connectedPeers[2] ? "CONNECTED" : "AVAILABLE"}</small></div>
+                <div className="topology-node node-d"><Icon name="monitor" /><span>{connectedPeers[3] ? "PEER 04" : "PEER SLOT 04"}</span><small>{connectedPeers[3] ? "CONNECTED" : "AVAILABLE"}</small></div>
+                <div className="topology-caption"><span className="legend-dot connected" /> {connectedPeers.length} ACTIVE <span className="legend-dot idle" /> DIRECT LINKS</div>
+              </div>
+              <div className="hero-status-strip"><span><i className={backend.status === "READY" ? "status-on" : ""} /> ENGINE <b>{backend.status}</b></span><span>TRANSPORT <b>TCP / TLS</b></span><span>INTERNET <b>WEBRTC</b></span><span>IDENTITY <b>{peer?.peerId ? "ESTABLISHED" : "PENDING"}</b></span></div>
             </section>
-            <section className="two-column">
-              <article className="surface"><div className="surface-heading"><div><h2>Quick access</h2><p>Files shared from this device</p></div><button className="text-link" onClick={() => setActivePage("my-files")}>View all <Icon name="arrow" /></button></div>
-                {!directory?.configured ? <Empty icon="folder" title="Choose a folder to get started" detail="Files in this folder can be discovered by your trusted peers." action="Choose shared folder" onAction={handleChooseDirectory} /> : localFiles.length === 0 ? <Empty icon="file" title="No files in this folder yet" detail="Add files to your selected folder to share them." /> : <FileTable files={localFiles.slice(0,6)} onSend={handleSendInternetFile} canSend={internetState.secure} busy={busy} />}
+
+            <section className="metric-grid">
+              <button className="metric-card metric-accent" onClick={() => setActivePage("my-files")}><span className="metric-label">LOCAL LIBRARY</span><b>{localFiles.length.toString().padStart(2, "0")}</b><small>Files shared from this device <Icon name="arrow" /></small><span className="metric-glyph"><Icon name="folder" /></span></button>
+              <button className="metric-card" onClick={() => setActivePage("devices")}><span className="metric-label">LIVE PEERS</span><b>{connectedPeers.length.toString().padStart(2, "0")}</b><small>Devices connected now <Icon name="arrow" /></small><span className="metric-glyph"><Icon name="nodes" /></span></button>
+              <button className="metric-card" onClick={() => setActivePage("transfers")}><span className="metric-label">IN FLIGHT</span><b>{activeTransferCount.toString().padStart(2, "0")}</b><small>Transfers in progress <Icon name="arrow" /></small><span className="metric-glyph"><Icon name="transfer" /></span></button>
+              <button className="metric-card" onClick={() => setActivePage("transfers")}><span className="metric-label">COMPLETED</span><b>{completedTransfers.toString().padStart(2, "0")}</b><small>Successful transfers <Icon name="arrow" /></small><span className="metric-glyph"><Icon name="check" /></span></button>
+            </section>
+
+            <section className="home-content-grid">
+              <article className="surface library-surface"><div className="surface-heading"><div><span className="surface-overline">ON THIS DEVICE</span><h2>Shared library</h2><p>Files your trusted peers can discover.</p></div><button className="text-link" onClick={() => setActivePage("my-files")}>Open library <Icon name="arrow" /></button></div>
+                {!directory?.configured ? <Empty icon="folder" title="Set up your shared library" detail="Choose a local folder. Only its top-level files will be offered to connected peers." action="Choose shared folder" onAction={handleChooseDirectory} /> : localFiles.length === 0 ? <Empty icon="file" title="Nothing in the library yet" detail="Add files to your selected folder to make them available." /> : <FileTable files={localFiles.slice(0, 6)} onSend={handleSendInternetFile} canSend={internetState.secure} busy={busy} />}
               </article>
-              <article className="surface"><div className="surface-heading"><div><h2>Recent activity</h2><p>What has happened on your device</p></div><button className="text-link" onClick={() => setActivePage("recent")}>See all <Icon name="arrow" /></button></div>
-                {activities.length === 0 ? <Empty icon="clock" title="No activity yet" detail="Connections and transfers will appear here." /> : <ActivityList activities={activities.slice(0,6)} />}
+              <article className="surface activity-surface"><div className="surface-heading"><div><span className="surface-overline">RECENT SIGNALS</span><h2>Activity stream</h2><p>Events from this desktop session.</p></div><button className="icon-button" onClick={() => setActivePage("recent")} title="Open activity log"><Icon name="arrow" /></button></div>
+                {activities.length === 0 ? <Empty icon="activity" title="Waiting for activity" detail="Peer discovery, connections and transfers will appear here." /> : <ActivityList activities={activities.slice(0, 6)} />}
               </article>
             </section>
-            <section className="surface"><div className="surface-heading"><div><h2>Your devices</h2><p>Peers connected to this P2P network</p></div><button className="text-link" onClick={() => setActivePage("devices")}>Manage devices <Icon name="arrow" /></button></div>{connectedPeers.length === 0 ? <div className="empty-line"><Icon name="monitor" />No devices connected yet.<button className="text-link" onClick={() => setActivePage("devices")}>Connect a device</button></div> : <PeerList peers={connectedPeers} onDisconnect={handleDisconnect} busy={busy} />}</section>
+            <section className="surface peer-summary"><div className="surface-heading"><div><span className="surface-overline">NETWORK MEMBERS</span><h2>Connected peers</h2><p>Devices currently known to this node.</p></div><button className="text-link" onClick={() => setActivePage("devices")}>Manage network <Icon name="arrow" /></button></div>{connectedPeers.length === 0 ? <div className="empty-line"><Icon name="nodes" />No peers connected. Start your node and connect another device to begin.</div> : <PeerList peers={connectedPeers} onDisconnect={handleDisconnect} busy={busy} />}</section>
           </div>}
 
           {activePage === "my-files" && <div className="page-content">
