@@ -696,7 +696,7 @@ function Icon({ name }: { name: string }) {
     laptop: <><rect x="4" y="4" width="16" height="12" rx="1.8" /><path d="M2 20h20l-2-4H4z" /></>,
     phone: <><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M10 5h4M11 18.5h2" /></>,
     server: <><rect x="3" y="4" width="18" height="7" rx="1.5" /><rect x="3" y="13" width="18" height="7" rx="1.5" /><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6" /></>,
-    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>
+    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
     x: <path d="m6 6 12 12M18 6 6 18" />,
     refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7.5 7.5 0 1 1-2-5.1L20 12" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
