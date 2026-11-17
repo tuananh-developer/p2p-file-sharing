@@ -52,10 +52,10 @@ Core chạy như một tiến trình độc lập. Mỗi dòng stdin là một c
 
 Nên chạy executable đã đóng gói thay vì `./gradlew run` khi kết nối với Electron, vì Gradle có thể ghi log build ra stdout trong khi stdout của Java Core được dành riêng cho JSON Lines.
 
-Ví dụ khởi chạy peer trên loopback port `5001`:
+Ví dụ khởi chạy peer để các thiết bị khác trong LAN kết nối được (mọi interface IPv4) trên port `5001`:
 
 ```json
-{"id":"start-1","command":"peer.start","payload":{"bindAddress":"127.0.0.1","port":5001}}
+{"id":"start-1","command":"peer.start","payload":{"bindAddress":"0.0.0.0","port":5001}}
 ```
 
 Liệt kê peer đã biết:
@@ -213,9 +213,9 @@ See [`docs/protocol.md`](docs/protocol.md) for the TCP handshake and connection 
 
 - Peer transport uses **TLS 1.3 with mutual certificate authentication**. Each installation creates and persists an RSA-3072 self-signed identity certificate; its SHA-256 fingerprint is the peer identity pin.
 - A new peer is rejected until **both devices trust each other's fingerprint**. Exchange the fingerprint through a separate trusted channel (in person, a verified call, or another authenticated channel). Do not approve a fingerprint received only over the connection being authenticated.
-- The local listener defaults to **Bind address `127.0.0.1` (loopback)** and **Listening port `0` (Auto)**. The OS allocates a free port, and the app lists active non-loopback IPv4 addresses that other peers can use. Enter a specific local address and/or port to use manual settings.
-- Use `0.0.0.0` only when you explicitly want to accept LAN connections on all local IPv4 interfaces. When using Wi-Fi, VPN, Docker, or a VM bridge, select the address reachable by the other device. The remote IP and the allocated listening port still need to be entered in the Connect to peer form; peer discovery is not automatic.
-- Only share folders whose contents you are comfortable exposing to the devices you explicitly trust. TLS protects confidentiality and integrity in transit and authenticates pinned peers, but does not prevent denial-of-service or make a public listener safe. Prefer a trusted LAN or VM network and do not forward the peer port from your router to the public Internet.
+- The local P2P listener defaults to **Bind address `0.0.0.0` (all local IPv4 interfaces)** and **Listening port `0` (Auto)**. This is the useful default for direct LAN/VPN peer connections. The OS allocates a free port, and the app lists the non-loopback IPv4 addresses peers can use; connect using one of those addresses and the displayed port.
+- Enter a specific local IPv4 address to restrict the listener to one interface. Use `127.0.0.1` only for same-machine development/testing. When using Wi-Fi, VPN, Docker, or a VM bridge, share the address reachable by the other device. The remote IP and allocated listening port must still be entered in the Connect to peer form; peer discovery is not automatic.
+- Because `0.0.0.0` listens on every local IPv4 interface, keep the listener on a trusted LAN/VPN and do not forward its port from your router to the public Internet. TLS 1.3 mutual authentication and certificate fingerprint pinning prevent untrusted peers from completing a session, but do not prevent connection attempts or denial-of-service. Only share folders with devices you explicitly trust.
 
 Before building a packaged desktop release, copy `.env.example` to `.env` and set `VITE_SIGNALING_URL` to the deployed public HTTPS signaling URL. During development, the URL can also be entered in the Internet Connectivity panel. Never put TURN shared secrets or other server credentials in the desktop `.env`; TURN credentials are minted by the server for each room.
 
