@@ -2270,7 +2270,7 @@ function App() {
                     <input
                       value={bindAddress}
                       onChange={(event) => setBindAddress(event.target.value)}
-                      placeholder="127.0.0.1"
+                      placeholder="0.0.0.0"
                       disabled={backend.status !== "READY"}
                     />
                   </label>
