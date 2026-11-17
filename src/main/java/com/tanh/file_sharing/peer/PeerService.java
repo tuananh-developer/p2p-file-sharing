@@ -42,6 +42,7 @@ import com.tanh.file_sharing.model.ConnectionStatus;
 import com.tanh.file_sharing.model.DownloadAccepted;
 import com.tanh.file_sharing.model.FileSearchError;
 import com.tanh.file_sharing.model.FileSearchResponse;
+import com.tanh.file_sharing.model.NetworkAddressSnapshot;
 import com.tanh.file_sharing.model.PeerSnapshot;
 import com.tanh.file_sharing.model.PeerStatus;
 import com.tanh.file_sharing.model.RemoteFileSearchResult;
@@ -817,10 +818,13 @@ public final class PeerService implements AutoCloseable {
     }
 
     private PeerSnapshot snapshot() {
-        List<String> addresses = status == PeerStatus.RUNNING
-                ? NetworkAddressResolver.addressesFor(bindAddress)
+        List<NetworkAddressSnapshot> networkAddresses = status == PeerStatus.RUNNING
+                ? NetworkAddressResolver.networkAddressesFor(bindAddress)
                 : List.of();
-        return new PeerSnapshot(peerId, status, bindAddress, listeningPort, addresses);
+        List<String> addresses = networkAddresses.stream()
+                .map(NetworkAddressSnapshot::address)
+                .toList();
+        return new PeerSnapshot(peerId, status, bindAddress, listeningPort, addresses, networkAddresses);
     }
 
     private static String safeHandshakeMessage(SSLHandshakeException exception) {
