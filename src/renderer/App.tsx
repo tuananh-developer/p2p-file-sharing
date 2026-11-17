@@ -1582,9 +1582,9 @@ function App() {
                     <small className="hint">
                       Choose Wi-Fi/Ethernet for another device on the same LAN,
                       a VM bridge for a guest VM, or Tailscale/VPN only when both
-                      devices are connected to that same VPN. Docker/container
-                      bridge addresses are usually not the right address for a
-                      separate physical device.
+                      devices are on the same authorized VPN. A 100.64/10 CGNAT
+                      address is not a normal LAN address. Docker/container
+                      bridge addresses are usually not right for a separate device.
                     </small>
                   </div>
                 </article>
