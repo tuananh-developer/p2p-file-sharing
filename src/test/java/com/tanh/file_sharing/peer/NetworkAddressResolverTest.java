@@ -39,6 +39,18 @@ class NetworkAddressResolverTest {
     }
 
     @Test
+    void recognizesTheSharedCgnatAddressRangeUsedByTailscale() throws Exception {
+        assertEquals(true, NetworkAddressResolver.isSharedCgnatAddress(
+                java.net.InetAddress.getByName("100.64.0.1")));
+        assertEquals(true, NetworkAddressResolver.isSharedCgnatAddress(
+                java.net.InetAddress.getByName("100.127.255.255")));
+        assertEquals(false, NetworkAddressResolver.isSharedCgnatAddress(
+                java.net.InetAddress.getByName("100.63.255.255")));
+        assertEquals(false, NetworkAddressResolver.isSharedCgnatAddress(
+                java.net.InetAddress.getByName("100.128.0.1")));
+    }
+
+    @Test
     void fallsBackToLanOrGenericVirtualInterfaceLabels() {
         assertEquals("LAN / Wi-Fi / Ethernet",
                 NetworkAddressResolver.classifyInterface("wlp2s0", "Intel Wi-Fi", false));
