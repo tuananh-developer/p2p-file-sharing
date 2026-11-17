@@ -71,9 +71,9 @@ function App() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
   const [trustedFingerprintInput, setTrustedFingerprintInput] = useState("");
-  const [bindAddress, setBindAddress] = useState("127.0.0.1");
+  const [bindAddress, setBindAddress] = useState("0.0.0.0");
   const [listenPort, setListenPort] = useState("0");
-  const [remoteHost, setRemoteHost] = useState("127.0.0.1");
+  const [remoteHost, setRemoteHost] = useState("");
   const [remotePort, setRemotePort] = useState("5002");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<{
@@ -331,14 +331,15 @@ function App() {
     void runAction("peer-start", async () => {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
+      const reachableAddresses = snapshot.addresses.map(
+        (address) => `${address}:${snapshot.port}`,
+      );
       setNotice({
         kind: "success",
         message:
-          "Peer is listening on " +
-          snapshot.bindAddress +
-          ":" +
-          snapshot.port +
-          ".",
+          reachableAddresses.length > 0
+            ? `Peer is listening. Share one of these addresses: ${reachableAddresses.join(", ")}.`
+            : `Peer is listening on ${snapshot.bindAddress}:${snapshot.port}.`,
       });
     });
   };
@@ -387,6 +388,14 @@ function App() {
 
   const handleConnect = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const host = remoteHost.trim();
+    if (!host) {
+      setNotice({
+        kind: "error",
+        message: "Enter the other device's LAN or VPN IP address.",
+      });
+      return;
+    }
     const port = parsePort(remotePort);
     if (port === null) {
       setNotice({
@@ -397,7 +406,7 @@ function App() {
     }
     void runAction("peer-connect", async () => {
       const connected = await window.p2p.peer.connect({
-        host: remoteHost.trim(),
+        host,
         port,
       });
       setPeers(await window.p2p.peer.list());
@@ -1488,7 +1497,7 @@ function App() {
                       <input
                         value={bindAddress}
                         onChange={(event) => setBindAddress(event.target.value)}
-                        placeholder="127.0.0.1"
+                        placeholder="0.0.0.0"
                         disabled={backend.status !== "READY"}
                       />
                     </label>
@@ -1504,8 +1513,10 @@ function App() {
                       />
                     </label>
                     <small className="hint">
-                      Use port 0 to let the operating system choose an available
-                      port.
+                      Default 0.0.0.0 listens on all local IPv4 interfaces for
+                      LAN/VPN peers. Share a reachable address below; only
+                      devices with trusted TLS fingerprints can connect.
+                      Port 0 lets the operating system choose an available port.
                     </small>
                     <div className="row-actions">
                       <button
@@ -2275,7 +2286,9 @@ function App() {
                     />
                   </label>
                   <small className="hint">
-                    Use port 0 for automatic port allocation.
+                    Default 0.0.0.0 listens on all local IPv4 interfaces for
+                    LAN/VPN peers. Use a specific local IP to restrict the
+                    listener to one interface. Port 0 selects an available port.
                   </small>
                   <div className="row-actions">
                     <button
