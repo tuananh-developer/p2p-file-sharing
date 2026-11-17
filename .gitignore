@@ -47,3 +47,9 @@ coverage/
 infra/nat-traversal/.env
 infra/nat-traversal/turnserver.conf
 infra/nat-traversal/certs/
+
+# Local environment configuration
+.env
+.env.local
+.env.*.local
+

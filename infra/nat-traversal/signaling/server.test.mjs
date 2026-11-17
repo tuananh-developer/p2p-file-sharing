@@ -18,10 +18,10 @@ async function withServer(options, callback) {
   }
 }
 
-async function createRoom(baseUrl, peerId = PEER_A) {
+async function createRoom(baseUrl, peerId = PEER_A, extraHeaders = {}) {
   const response = await fetch(baseUrl + "/v1/rooms", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify({ peerId })
   });
   assert.equal(response.status, 201);
@@ -191,10 +191,14 @@ test("issues short-lived TURN REST credentials without exposing the shared secre
     });
     assert.equal(response.status, 200);
     const body = await response.json();
-    const server = body.iceServers[0];
+    const stunServer = body.iceServers.find((item) => item.urls === "stun:turn.example.test:3478");
+    const server = body.iceServers.find((item) => Array.isArray(item.urls) && item.urls.some((url) => url.startsWith("turn:")));
+    assert.ok(stunServer);
+    assert.ok(server);
     assert.ok(server.urls.includes("turn:turn.example.test:3478?transport=udp"));
     assert.ok(server.urls.includes("turn:turn.example.test:3478?transport=tcp"));
     assert.ok(server.urls.includes("turns:turn.example.test:5349?transport=tcp"));
+    assert.equal(body.turnAvailable, true);
     assert.ok(body.expiresAt > Date.now());
 
     const expected = createHmac("sha1", sharedSecret).update(server.username).digest("base64");
@@ -203,15 +207,52 @@ test("issues short-lived TURN REST credentials without exposing the shared secre
   });
 });
 
-test("reports TURN as unavailable when no shared secret is configured", async () => {
+test("returns STUN-only ICE configuration when TURN is not configured", async () => {
   await withServer({}, async (baseUrl) => {
     const room = await createRoom(baseUrl);
     const response = await fetch(baseUrl + "/v1/rooms/" + room.roomId + "/turn-credentials", {
       method: "POST",
       headers: roomHeaders(room, PEER_A)
     });
-    assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, "TURN_NOT_CONFIGURED");
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.turnAvailable, false);
+    assert.equal(body.iceServers.length, 1);
+    assert.equal(body.iceServers[0].urls, "stun:stun.l.google.com:19302");
+    assert.equal(body.expiresAt, null);
+  });
+});
+
+test("rate limits signaling messages per peer", async () => {
+  await withServer({}, async (baseUrl) => {
+    const room = await createRoom(baseUrl);
+    await fetch(baseUrl + "/v1/rooms/" + room.roomId + "/join", {
+      method: "POST",
+      headers: {
+        ...roomHeaders(room, PEER_A),
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+
+    let lastStatus = 0;
+    for (let index = 0; index < 241; index += 1) {
+      const response = await fetch(baseUrl + "/v1/rooms/" + room.roomId + "/messages", {
+        method: "POST",
+        headers: {
+          ...roomHeaders(room, PEER_A),
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          toPeerId: PEER_B,
+          type: "ice-candidate",
+          payload: { candidate: "candidate-" + index }
+        })
+      });
+      lastStatus = response.status;
+      if (index < 240) assert.equal(lastStatus, 202);
+    }
+    assert.equal(lastStatus, 429);
   });
 });
 
@@ -225,5 +266,54 @@ test("expires rendezvous rooms", async () => {
     });
     assert.equal(response.status, 404);
     assert.equal((await response.json()).error.code, "ROOM_NOT_FOUND");
+  });
+});
+
+
+test("rate limits public invite-room creation per client address", async () => {
+  await withServer({ roomCreationLimit: 2 }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A);
+    await createRoom(baseUrl, PEER_B);
+    const blocked = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ peerId: PEER_C })
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal((await blocked.json()).error.code, "ROOM_CREATION_RATE_LIMITED");
+  });
+});
+
+test("uses X-Real-IP only when the request comes from the configured trusted proxy", async () => {
+  await withServer({
+    trustedProxyAddress: "127.0.0.1",
+    roomCreationLimit: 1
+  }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A, { "x-real-ip": "198.51.100.10" });
+    const differentClient = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "198.51.100.11" },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+    assert.equal(differentClient.status, 201);
+
+    const repeatedClient = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "198.51.100.10" },
+      body: JSON.stringify({ peerId: PEER_C })
+    });
+    assert.equal(repeatedClient.status, 429);
+  });
+});
+
+test("ignores spoofed X-Real-IP headers from untrusted clients", async () => {
+  await withServer({ roomCreationLimit: 1 }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A, { "x-real-ip": "198.51.100.10" });
+    const blocked = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "203.0.113.50" },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+    assert.equal(blocked.status, 429);
   });
 });

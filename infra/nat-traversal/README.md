@@ -6,7 +6,7 @@ This directory contains the first server-side layer for Internet peer connectivi
 - **TURN (coturn):** optional relay infrastructure for peers that cannot establish a direct ICE path.
 - **Caddy:** terminates HTTPS for the signaling API and obtains/renews certificates automatically.
 
-The desktop application does **not** consume this service yet. The current Java TCP/TLS transport remains the LAN transport. The next client-side change must add WebRTC ICE + DataChannel, request room/TURN configuration from this service, and transfer file chunks over the DataChannel. Do not describe public-Internet transfer as supported until that client work and cross-network tests are complete.
+The desktop application now consumes the signaling service through its WebRTC ICE + DataChannel Internet transport. The existing Java TCP/TLS transport remains the LAN/reachable-peer transport. Public Internet use still requires deployment at a reachable HTTPS hostname; restrictive NATs require a configured and reachable TURN relay. Cross-network manual validation is still required before calling the feature production-ready.
 
 ## Why this is separate from the Java TCP listener
 
@@ -66,7 +66,7 @@ All endpoints are under \`/v1\`. Requests/responses use JSON. Room tokens are 25
 | POST | \`/v1/rooms/{roomId}/turn-credentials\` | Mint short-lived TURN REST credentials for a room member |
 | POST | \`/v1/rooms/{roomId}/leave\` | Leave a room |
 
-The server supports two peers per room, a 10-minute default TTL, a 64 KiB request limit, a 48 KiB signaling payload limit, and at most one active long poll per peer. It stores signaling messages in memory only; restart drops active rooms. Do not send file contents through this service.
+The server supports two peers per room, a 10-minute default TTL, at most 2,000 active rooms, a 64 KiB request limit, a 48 KiB signaling payload limit, at most 240 signaling messages per peer per minute, a 64 MiB global signaling-message buffer, and at most one active long poll per peer. It stores signaling messages in memory only; restart drops active rooms. Do not send file contents through this service.
 
 TURN credentials are generated with the coturn REST shared-secret mechanism and expire after 10 minutes. The shared secret stays on the server; it is never returned to a desktop client. Keep \`.env\`, \`turnserver.conf\`, and TURN TLS private keys out of source control.
 
@@ -86,3 +86,8 @@ node --test infra/nat-traversal/signaling/server.test.mjs
 - Restrict access to the TURN port range and monitor bandwidth. Relay data egress is the main operating cost.
 - Do not hard-code a public TURN credential in the desktop application. The client must request short-lived credentials after joining a room.
 - The desktop client must validate peer identity at the application layer (for example by comparing a short authentication string derived from both DTLS fingerprints out-of-band) before offering or accepting files. WebRTC DTLS encrypts the data channel but does not by itself prove that the signaling rendezvous is not malicious.
+
+
+## Trusted reverse proxy and room-creation throttling
+
+The signaling container trusts `X-Real-IP` only when the TCP peer is the explicitly configured Caddy address (`SIGNALING_PROXY_IP`). Caddy overwrites that header with the connecting client's address. The signaling service ignores client-supplied forwarding headers from every other source. The dedicated Docker subnet and proxy address are configurable in `.env`; choose a subnet that does not overlap the VPS or another Docker network. Public invite-room creation is rate-limited per client address, in addition to global room and signaling-buffer limits.

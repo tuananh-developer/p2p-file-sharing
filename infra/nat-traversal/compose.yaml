@@ -6,12 +6,13 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
-      TURN_PUBLIC_HOST: \${TURN_PUBLIC_HOST:-}
-      TURN_REALM: \${TURN_REALM:-}
-      TURN_PORT: \${TURN_PORT:-3478}
-      TURN_TLS_PORT: \${TURN_TLS_PORT:-5349}
-      TURN_SHARED_SECRET: \${TURN_SHARED_SECRET:-}
-      STUN_URL: \${STUN_URL:-}
+      TURN_PUBLIC_HOST: ${TURN_PUBLIC_HOST:-}
+      TURN_REALM: ${TURN_REALM:-}
+      TURN_PORT: ${TURN_PORT:-3478}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
+      STUN_URL: ${STUN_URL:-}
+      TRUSTED_PROXY_ADDRESS: ${SIGNALING_PROXY_IP:-172.30.0.2}
     expose:
       - "8080"
     networks:
@@ -21,7 +22,7 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     environment:
-      SIGNALING_DOMAIN: \${SIGNALING_DOMAIN:?Set SIGNALING_DOMAIN in .env}
+      SIGNALING_DOMAIN: ${SIGNALING_DOMAIN:?Set SIGNALING_DOMAIN in .env}
     ports:
       - "80:80"
       - "443:443"
@@ -33,7 +34,8 @@ services:
     depends_on:
       - signaling
     networks:
-      - signaling
+      signaling:
+        ipv4_address: ${SIGNALING_PROXY_IP:-172.30.0.2}
 
   turn:
     image: coturn/coturn:4.6.3
@@ -51,6 +53,9 @@ services:
 
 networks:
   signaling:
+    ipam:
+      config:
+        - subnet: ${SIGNALING_SUBNET:-172.30.0.0/24}
 
 volumes:
   caddy_data:

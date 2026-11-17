@@ -1,4 +1,6 @@
 {$SIGNALING_DOMAIN} {
     encode zstd gzip
-    reverse_proxy signaling:8080
+    reverse_proxy signaling:8080 {
+        header_up X-Real-IP {http.request.remote.host}
+    }
 }
