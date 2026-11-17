@@ -87,12 +87,24 @@ public final class NetworkAddressResolver {
         String name = networkInterface.getName();
         String displayName = networkInterface.getDisplayName();
         boolean virtual = networkInterface.isVirtual();
+        String category = classifyInterface(name, displayName, virtual);
+        if ("LAN / Wi-Fi / Ethernet".equals(category) && isSharedCgnatAddress(address)) {
+            category = "CGNAT / shared address range";
+        }
         return new NetworkAddressSnapshot(
                 address.getHostAddress(),
                 name,
                 displayName == null || displayName.isBlank() ? name : displayName,
-                classifyInterface(name, displayName, virtual),
+                category,
                 virtual);
+    }
+
+    static boolean isSharedCgnatAddress(InetAddress address) {
+        byte[] octets = address.getAddress();
+        return octets.length == 4
+                && (octets[0] & 0xff) == 100
+                && (octets[1] & 0xff) >= 64
+                && (octets[1] & 0xff) <= 127;
     }
 
     static String classifyInterface(String interfaceName, String displayName, boolean virtual) {
