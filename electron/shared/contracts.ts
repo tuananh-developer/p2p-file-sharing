@@ -5,12 +5,21 @@ export interface BackendStatusSnapshot {
   error?: string;
 }
 
+export interface NetworkAddressSnapshot {
+  address: string;
+  interfaceName: string;
+  displayName: string;
+  category: string;
+  virtual: boolean;
+}
+
 export interface PeerSnapshot {
   peerId: string;
   status: "STOPPED" | "STARTING" | "RUNNING" | "STOPPING";
   bindAddress: string;
   port: number;
   addresses: string[];
+  networkAddresses?: NetworkAddressSnapshot[];
 }
 
 export interface SecuritySnapshot {
