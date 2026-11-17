@@ -95,6 +95,19 @@ export interface TransferSnapshot {
   completedChunks?: number;
 }
 
+export interface InternetSharedFileHandle {
+  handleId: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+}
+
+export interface InternetReceiveHandle {
+  handleId: string;
+  fileName: string;
+  size: number;
+}
+
 export interface BackendEvent {
   event: string;
   data: Record<string, unknown>;
@@ -134,6 +147,15 @@ export interface P2PBridgeApi {
     list(): Promise<TransferSnapshot[]>;
     listResumable(): Promise<ResumableDownloadSnapshot[] | null>;
     resume(taskId: string, peerIds: string[]): Promise<DownloadAccepted>;
+  };
+  internet: {
+    openSharedFile(fileName: string): Promise<InternetSharedFileHandle>;
+    readSharedFileChunk(input: { handleId: string; offset: number; length: number }): Promise<Uint8Array>;
+    closeSharedFile(handleId: string): Promise<void>;
+    beginReceive(input: { fileName: string; size: number }): Promise<InternetReceiveHandle | null>;
+    writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<number>;
+    completeReceive(input: { handleId: string; sha256: string }): Promise<{ fileName: string; size: number; sha256: string }>;
+    abortReceive(handleId: string): Promise<void>;
   };
   onEvent(listener: (event: BackendEvent) => void): () => void;
 }
