@@ -8,5 +8,6 @@ public record PeerSnapshot(
         PeerStatus status,
         String bindAddress,
         int port,
-        List<String> addresses) {
+        List<String> addresses,
+        List<NetworkAddressSnapshot> networkAddresses) {
 }
