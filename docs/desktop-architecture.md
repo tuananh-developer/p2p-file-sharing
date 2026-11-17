@@ -75,11 +75,11 @@ The preload imports Electron only; Node process and filesystem APIs remain in Ma
 
 On app close, Main prevents immediate quit, sends `app.shutdown` to Java, closes stdin and waits for a bounded grace period. If the child does not exit, Main escalates to SIGTERM and then SIGKILL. An unexpected process exit rejects outstanding requests and publishes a backend failure event; the UI must not retain a stale RUNNING peer state.
 
-The P2P listener defaults to Auto IPv4 binding (`0.0.0.0`) and an OS-assigned listening port (`0`). The Java peer snapshot lists active non-loopback IPv4 addresses and the actual bound port; a user can instead bind to a specific local IPv4 address and fixed port.
+The P2P listener defaults to Auto IPv4 binding (`0.0.0.0`) and an OS-assigned listening port (`0`). The Java peer snapshot contains both the legacy IPv4 address list and interface-aware address metadata (interface name, display name, category and virtual-interface flag). The desktop labels LAN/Wi-Fi/Ethernet, VM bridges, VPN/Tailscale and container bridges separately. This metadata is a routing hint only: actual reachability still depends on the network topology, routing and host firewall. A user can instead bind to a specific local IPv4 address and fixed port.
 
 P2P traffic uses TLS 1.3 mutual certificate authentication. Each installation stores an RSA-3072 private key and self-signed X.509 certificate under `~/.p2p-file-sharing`; the Renderer sees only the SHA-256 fingerprint, never private-key material. Peers are accepted only when each side has explicitly pinned the other side's certificate fingerprint. Fingerprints must be exchanged over a separate trusted channel. The existing JSON handshake and transfer protocol run inside the TLS session; there is no plaintext fallback.
 
-Auto binding listens on all local IPv4 interfaces, so operators should choose a specific interface when a machine has multiple networks (for example Wi-Fi, VPN, containers, or a VM bridge). TLS does not mitigate denial-of-service; keep the listener on a trusted network and do not expose it directly to the public Internet.
+Auto binding listens on all local IPv4 interfaces, so operators should choose an address whose interface matches the peer's path. Use a LAN adapter for other devices on the same LAN, a libvirt/VM bridge address for guests attached to that bridge, and a Tailscale/VPN address only when both peers are authorized on the same overlay network. Container bridge addresses are displayed for diagnosis but are generally not reachable from separate physical devices. TLS does not mitigate denial-of-service; keep the listener on a trusted network and do not expose it directly to the public Internet.
 
 
 ## Multi-source transfer behavior
