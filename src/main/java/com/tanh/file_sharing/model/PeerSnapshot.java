@@ -10,4 +10,12 @@ public record PeerSnapshot(
         int port,
         List<String> addresses,
         List<NetworkAddressSnapshot> networkAddresses) {
+
+    /**
+     * Backward-compatible constructor for callers that only have plain
+     * address strings.
+     */
+    public PeerSnapshot(UUID peerId, PeerStatus status, String bindAddress, int port, List<String> addresses) {
+        this(peerId, status, bindAddress, port, addresses, List.of());
+    }
 }
