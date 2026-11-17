@@ -184,13 +184,13 @@ Xem [`docs/desktop-architecture.md`](docs/desktop-architecture.md) để biết 
 Command envelope:
 
 ```json
-{"id":"request-id","command":"peer.start","payload":{"bindAddress":"127.0.0.1","port":5001}}
+{"id":"request-id","command":"peer.start","payload":{"bindAddress":"0.0.0.0","port":5001}}
 ```
 
 Success response:
 
 ```json
-{"type":"response","id":"request-id","success":true,"data":{"peer":{"peerId":"...","status":"RUNNING","bindAddress":"127.0.0.1","port":5001}}}
+{"type":"response","id":"request-id","success":true,"data":{"peer":{"peerId":"...","status":"RUNNING","bindAddress":"0.0.0.0","port":5001}}}
 ```
 
 Error response:
