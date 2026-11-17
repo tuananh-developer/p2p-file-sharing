@@ -1,8 +1,5 @@
 package com.tanh.file_sharing.transfer;
 
-import com.tanh.file_sharing.peer.PeerException;
-import com.tanh.file_sharing.sharing.SharedDirectoryService;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -22,6 +19,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+
+import com.tanh.file_sharing.sharing.SharedDirectoryService;
 
 /**
  * Crash-safe metadata for resumable ranged downloads. The manifest is replaced
