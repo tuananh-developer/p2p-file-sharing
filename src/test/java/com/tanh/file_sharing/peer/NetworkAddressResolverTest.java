@@ -44,11 +44,11 @@ class NetworkAddressResolverTest {
     void recognizesTheSharedCgnatAddressRangeUsedByTailscale() throws Exception {
         assertTrue(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.64.0.1")));
-        assertEquals(true, NetworkAddressResolver.isSharedCgnatAddress(
+        assertTrue(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.127.255.255")));
         assertFalse(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.63.255.255")));
-        assertEquals(false, NetworkAddressResolver.isSharedCgnatAddress(
+        assertFalse(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.128.0.1")));
     }
 
