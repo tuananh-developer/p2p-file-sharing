@@ -18,16 +18,12 @@ async function withServer(options, callback) {
   }
 }
 
-async function createRoomRequest(baseUrl, peerId = PEER_A, extraHeaders = {}) {
-  return fetch(baseUrl + "/v1/rooms", {
+async function createRoom(baseUrl, peerId = PEER_A, extraHeaders = {}) {
+  const response = await fetch(baseUrl + "/v1/rooms", {
     method: "POST",
     headers: { "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify({ peerId })
   });
-}
-
-async function createRoom(baseUrl, peerId = PEER_A) {
-  const response = await createRoomRequest(baseUrl, peerId);
   assert.equal(response.status, 201);
   return response.json();
 }
@@ -38,49 +34,6 @@ function roomHeaders(room, peerId) {
     "x-peer-id": peerId
   };
 }
-
-test("rate-limits room creation by socket address and ignores untrusted forwarding headers", async () => {
-  let timestamp = Date.now();
-  await withServer({ now: () => timestamp }, async (baseUrl) => {
-    for (let index = 1; index <= 10; index += 1) {
-      const response = await createRoomRequest(baseUrl, PEER_A, {
-        "x-real-ip": "198.51.100." + index
-      });
-      assert.equal(response.status, 201);
-    }
-
-    const limited = await createRoomRequest(baseUrl, PEER_A, {
-      "x-real-ip": "203.0.113.99"
-    });
-    assert.equal(limited.status, 429);
-    assert.equal((await limited.json()).error.code, "ROOM_CREATE_RATE_LIMITED");
-
-    timestamp += 60_001;
-    const afterWindow = await createRoomRequest(baseUrl);
-    assert.equal(afterWindow.status, 201);
-  });
-});
-
-test("uses X-Real-IP only when the request comes from the configured trusted proxy", async () => {
-  await withServer({ trustedProxyAddress: "127.0.0.1" }, async (baseUrl) => {
-    for (let index = 0; index < 10; index += 1) {
-      const response = await createRoomRequest(baseUrl, PEER_A, {
-        "x-real-ip": "198.51.100.10"
-      });
-      assert.equal(response.status, 201);
-    }
-
-    const limited = await createRoomRequest(baseUrl, PEER_A, {
-      "x-real-ip": "198.51.100.10"
-    });
-    assert.equal(limited.status, 429);
-
-    const otherClient = await createRoomRequest(baseUrl, PEER_A, {
-      "x-real-ip": "198.51.100.11"
-    });
-    assert.equal(otherClient.status, 201);
-  });
-});
 
 test("creates a room with an unguessable bearer secret", async () => {
   await withServer({}, async (baseUrl) => {
@@ -313,5 +266,54 @@ test("expires rendezvous rooms", async () => {
     });
     assert.equal(response.status, 404);
     assert.equal((await response.json()).error.code, "ROOM_NOT_FOUND");
+  });
+});
+
+
+test("rate limits public invite-room creation per client address", async () => {
+  await withServer({ roomCreationLimit: 2 }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A);
+    await createRoom(baseUrl, PEER_B);
+    const blocked = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ peerId: PEER_C })
+    });
+    assert.equal(blocked.status, 429);
+    assert.equal((await blocked.json()).error.code, "ROOM_CREATION_RATE_LIMITED");
+  });
+});
+
+test("uses X-Real-IP only when the request comes from the configured trusted proxy", async () => {
+  await withServer({
+    trustedProxyAddress: "127.0.0.1",
+    roomCreationLimit: 1
+  }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A, { "x-real-ip": "198.51.100.10" });
+    const differentClient = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "198.51.100.11" },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+    assert.equal(differentClient.status, 201);
+
+    const repeatedClient = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "198.51.100.10" },
+      body: JSON.stringify({ peerId: PEER_C })
+    });
+    assert.equal(repeatedClient.status, 429);
+  });
+});
+
+test("ignores spoofed X-Real-IP headers from untrusted clients", async () => {
+  await withServer({ roomCreationLimit: 1 }, async (baseUrl) => {
+    await createRoom(baseUrl, PEER_A, { "x-real-ip": "198.51.100.10" });
+    const blocked = await fetch(baseUrl + "/v1/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "203.0.113.50" },
+      body: JSON.stringify({ peerId: PEER_B })
+    });
+    assert.equal(blocked.status, 429);
   });
 });

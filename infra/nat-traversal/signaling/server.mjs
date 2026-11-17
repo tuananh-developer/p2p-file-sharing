@@ -5,8 +5,8 @@ import {
   randomBytes,
   timingSafeEqual
 } from "node:crypto";
-import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
+import { isIP } from "node:net";
 
 const PEER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MESSAGE_TYPES = new Set(["offer", "answer", "ice-candidate", "hangup"]);
@@ -16,16 +16,10 @@ const MAX_ROOMS = 2_000;
 const MAX_MESSAGES_PER_ROOM = 512;
 const MAX_STORED_SIGNAL_BYTES = 64 * 1024 * 1024;
 const MAX_PEER_MESSAGES_PER_MINUTE = 240;
-const MAX_ROOM_CREATES_PER_MINUTE = 10;
-const ROOM_CREATE_WINDOW_MS = 60_000;
-const MAX_RATE_LIMIT_CLIENTS = 10_000;
+const MAX_ROOM_CREATIONS_PER_MINUTE = 10;
+const MAX_TRACKED_CLIENTS = 10_000;
 const DEFAULT_ROOM_TTL_MS = 10 * 60 * 1000;
 const MAX_LONG_POLL_MS = 20_000;
-
-function normalizeAddress(value) {
-  const address = typeof value === "string" ? value.trim() : "";
-  return address.toLowerCase().startsWith("::ffff:") ? address.slice(7) : address;
-}
 
 class HttpError extends Error {
   constructor(status, code, message) {
@@ -101,6 +95,20 @@ function getBearerToken(request) {
   return match[1];
 }
 
+function normalizeAddress(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/^::ffff:/i, "").toLowerCase();
+}
+
+function getClientAddress(request, trustedProxyAddress) {
+  const remoteAddress = normalizeAddress(request.socket.remoteAddress ?? "");
+  if (trustedProxyAddress && remoteAddress === trustedProxyAddress) {
+    const forwardedAddress = normalizeAddress(request.headers["x-real-ip"] ?? "");
+    if (isIP(forwardedAddress)) return forwardedAddress;
+  }
+  return isIP(remoteAddress) ? remoteAddress : "unknown";
+}
+
 function createRoomRecord(id, secret, peerId, now, ttlMs) {
   return {
     id,
@@ -133,46 +141,39 @@ export function createSignalingServer(options = {}) {
   const turnPort = options.turnPort ?? Number(process.env.TURN_PORT ?? 3478);
   const turnTlsPort = options.turnTlsPort ?? Number(process.env.TURN_TLS_PORT ?? 5349);
   const stunUrl = options.stunUrl ?? process.env.STUN_URL ?? "stun:stun.l.google.com:19302";
-  const configuredProxy = normalizeAddress(options.trustedProxyAddress ?? process.env.TRUSTED_PROXY_ADDRESS ?? "");
-  const trustedProxyAddress = isIP(configuredProxy) ? configuredProxy : "";
+  const trustedProxyAddress = normalizeAddress(
+    options.trustedProxyAddress ?? process.env.TRUSTED_PROXY_ADDRESS ?? ""
+  );
+  const roomCreationLimit = options.roomCreationLimit ?? MAX_ROOM_CREATIONS_PER_MINUTE;
+  const roomCreationWindowMs = options.roomCreationWindowMs ?? 60_000;
+  const roomCreationEvents = new Map();
   const rooms = new Map();
-  const roomCreationBuckets = new Map();
   let storedSignalBytes = 0;
 
-  function clientAddress(request) {
-    const remoteAddress = normalizeAddress(request.socket.remoteAddress ?? "");
-    if (trustedProxyAddress && remoteAddress === trustedProxyAddress) {
-      const suppliedAddress = normalizeAddress(request.headers["x-real-ip"]);
-      if (typeof request.headers["x-real-ip"] === "string" && isIP(suppliedAddress)) {
-        return suppliedAddress;
-      }
-    }
-    // Forwarded headers from untrusted clients are deliberately ignored.
-    return remoteAddress || "unknown";
-  }
-
-  function enforceRoomCreationLimit(request) {
+  function recordRoomCreation(request) {
     const timestamp = now();
-    for (const [address, bucket] of roomCreationBuckets) {
-      if (timestamp < bucket.startedAt || timestamp - bucket.startedAt >= ROOM_CREATE_WINDOW_MS) {
-        roomCreationBuckets.delete(address);
+    const clientAddress = getClientAddress(request, trustedProxyAddress);
+    let timestamps = roomCreationEvents.get(clientAddress);
+
+    if (!timestamps) {
+      if (roomCreationEvents.size >= MAX_TRACKED_CLIENTS) {
+        for (const [address, events] of roomCreationEvents) {
+          while (events.length > 0 && events[0] <= timestamp - roomCreationWindowMs) events.shift();
+          if (events.length === 0) roomCreationEvents.delete(address);
+        }
       }
+      if (roomCreationEvents.size >= MAX_TRACKED_CLIENTS) {
+        throw new HttpError(503, "CLIENT_TRACKING_CAPACITY", "The signaling service cannot track additional clients right now.");
+      }
+      timestamps = [];
+      roomCreationEvents.set(clientAddress, timestamps);
     }
 
-    const address = clientAddress(request);
-    let bucket = roomCreationBuckets.get(address);
-    if (!bucket) {
-      if (roomCreationBuckets.size >= MAX_RATE_LIMIT_CLIENTS) {
-        throw new HttpError(503, "RATE_LIMIT_CAPACITY_REACHED", "The signaling rate limiter is at capacity.");
-      }
-      bucket = { startedAt: timestamp, count: 0 };
-      roomCreationBuckets.set(address, bucket);
+    while (timestamps.length > 0 && timestamps[0] <= timestamp - roomCreationWindowMs) timestamps.shift();
+    if (timestamps.length >= roomCreationLimit) {
+      throw new HttpError(429, "ROOM_CREATION_RATE_LIMITED", "Too many invite rooms were created from this client. Try again later.");
     }
-
-    if (bucket.count >= MAX_ROOM_CREATES_PER_MINUTE) {
-      throw new HttpError(429, "ROOM_CREATE_RATE_LIMITED", "Too many invite rooms were created from this address. Try again in one minute.");
-    }
-    bucket.count += 1;
+    timestamps.push(timestamp);
   }
 
   function closePoller(room, peerId, status, body) {
@@ -363,9 +364,9 @@ export function createSignalingServer(options = {}) {
       }
 
       if (request.method === "POST" && url.pathname === "/v1/rooms") {
-        enforceRoomCreationLimit(request);
         const body = await readJson(request);
         const peerId = validatePeerId(body.peerId);
+        recordRoomCreation(request);
         expireRooms();
         if (rooms.size >= MAX_ROOMS) {
           throw new HttpError(503, "ROOM_CAPACITY_REACHED", "The signaling service is at capacity.");

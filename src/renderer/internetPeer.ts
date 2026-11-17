@@ -493,7 +493,7 @@ export class InternetPeerSession {
       throw new Error("The WebRTC connection is not ready for safety-code verification.");
     }
     if (this.localConfirmed) return;
-    this.sendControl({ type: "security-confirm", code: this.authCode });
+    this.sendControl({ type: "security-confirm", authenticationCode: this.authCode });
     this.localConfirmed = true;
     this.publish();
   }
@@ -641,8 +641,8 @@ export class InternetPeerSession {
 
   private async handleControl(message: Record<string, unknown>): Promise<void> {
     if (message.type === "security-confirm") {
-      if (!this.authCode || typeof message.code !== "string" || message.code !== this.authCode) {
-        throw new Error("The remote peer did not confirm the matching DTLS safety code.");
+      if (!this.authCode || message.authenticationCode !== this.authCode) {
+        throw new Error("The remote peer confirmed a different or unverified DTLS safety code.");
       }
       this.remoteConfirmed = true;
       this.publish();

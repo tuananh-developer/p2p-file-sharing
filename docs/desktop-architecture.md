@@ -56,9 +56,9 @@ There is no generic `send(command, payload)` or arbitrary channel argument expos
 
 ## Internet DataChannel file path
 
-The Renderer owns the WebRTC peer connection and ordered DataChannel. The HTTPS signaling service relays only authenticated room messages (offer, answer, ICE candidates and hangup); it never receives file bytes. Before file operations are enabled, both users compare the eight-digit safety code derived from the DTLS certificate fingerprints and confirm it.
+The Renderer owns the WebRTC peer connection and ordered DataChannel. The HTTPS signaling service relays only authenticated room messages (offer, answer, ICE candidates and hangup); it never receives file bytes. Before file operations are enabled, both users compare the eight-digit safety code derived from the DTLS certificate fingerprints and confirm it. Each confirmation carries that code so the other peer rejects mismatched or premature confirmations.
 
-For sending, the Renderer asks Electron Main to open a file by name inside the configured shared directory. Main canonicalizes that directory, rejects path traversal and symlinks, hashes the file and exposes bounded, sequential chunk reads through allowlisted IPC handles. For receiving, Main opens a native save dialog, writes chunks to a mode-0600 temporary file, verifies the final SHA-256 digest and only then publishes the completed file. Internet transfers do not reuse Java TCP download/resume state; WebRTC resume is not implemented.
+For sending, the Renderer asks Electron Main to open a file by name inside the configured shared directory. Main canonicalizes that directory, rejects traversal and symlinks, hashes the file and exposes bounded chunk reads through allowlisted IPC handles. For receiving, Main opens a native save dialog, writes chunks to a mode-0600 temporary file, verifies the final SHA-256 digest and publishes the completed file with an exclusive hard link. An existing destination is never overwritten. Internet transfers do not reuse Java TCP download/resume state; WebRTC resume is not implemented.
 
 ## BrowserWindow security
 

@@ -8,7 +8,7 @@ import {
 } from "electron";
 import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstat, statSync } from "node:fs";
 import { link, open, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
@@ -73,10 +73,22 @@ async function openInternetSharedFile(fileNameValue: unknown): Promise<{
     throw new Error("The requested shared file is outside the configured directory.");
   }
 
+  const entry = await lstat(filePath);
+  if (!entry.isFile() || entry.isSymbolicLink()) {
+    throw new Error("Only regular files directly inside the shared directory can be sent.");
+  }
+  const canonicalFilePath = await realpath(filePath);
+  if (dirname(canonicalFilePath) !== directory || basename(canonicalFilePath) !== fileName) {
+    throw new Error("The requested shared file resolves outside the configured directory.");
+  }
+
   const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
-  const handle = await open(filePath, fsConstants.O_RDONLY | noFollow);
+  const handle = await open(canonicalFilePath, fsConstants.O_RDONLY | noFollow);
   try {
     const before = await handle.stat();
+    if (before.dev !== entry.dev || before.ino !== entry.ino) {
+      throw new Error("The shared file changed while it was being opened.");
+    }
     if (!before.isFile() || before.size < 0 || before.size > MAX_INTERNET_FILE_BYTES) {
       throw new Error("The selected file is not a regular file or exceeds the 50 GiB transfer limit.");
     }
@@ -244,18 +256,22 @@ async function completeInternetReceive(input: { handleId?: unknown; sha256?: unk
   await receive.handle.sync();
   await receive.handle.close();
   try {
-    // link() creates the final name atomically and fails with EEXIST instead of
-    // replacing a file created after the user selected the destination.
+    // link() publishes the verified temporary file atomically and fails with EEXIST
+    // instead of replacing a destination that appeared after the save dialog.
     await link(receive.temporaryPath, receive.targetPath);
   } catch (error) {
-    await unlink(receive.temporaryPath).catch(() => undefined);
     incomingFileHandles.delete(handleId);
+    await unlink(receive.temporaryPath).catch(() => undefined);
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      throw new Error("The destination file already exists; refusing to overwrite it.");
+    }
     throw error;
   }
-  await unlink(receive.temporaryPath).catch((error: unknown) => {
-    console.warn("[Electron] Could not remove the temporary hard-link name:", error);
-  });
   incomingFileHandles.delete(handleId);
+  await unlink(receive.temporaryPath).catch((error: unknown) => {
+    console.error("[Electron] Could not remove a completed Internet-transfer temporary file:", error);
+  });
   return { fileName: receive.fileName, size: receive.size, sha256: actualHash };
 }
 
