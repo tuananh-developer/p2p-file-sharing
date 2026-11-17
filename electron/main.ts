@@ -8,8 +8,8 @@ import {
 } from "electron";
 import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstat, statSync } from "node:fs";
-import { link, open, realpath, unlink, type FileHandle } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
+import { link, lstat, open, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
 import type { BackendEvent, BackendStatusSnapshot } from "./shared/contracts";
