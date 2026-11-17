@@ -331,17 +331,12 @@ function App() {
     void runAction("peer-start", async () => {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
-      const networkAddresses = snapshot.networkAddresses ?? [];
-      const suggestedAddress = networkAddresses.find(
-        (entry) =>
-          entry.category === "LAN / Wi-Fi / Ethernet" ||
-          entry.category === "Virtual machine bridge",
-      );
+      const addressCount =
+        snapshot.networkAddresses?.length ?? snapshot.addresses.length;
       setNotice({
         kind: "success",
-        message: suggestedAddress
-          ? `Peer is listening. For a nearby LAN/VM peer, try ${suggestedAddress.address}:${snapshot.port} (${suggestedAddress.category} · ${suggestedAddress.interfaceName}). Review all interface labels before sharing an address.`
-          : `Peer is listening on ${snapshot.bindAddress}:${snapshot.port}. Review the interface address list before sharing an address.`,
+        message:
+          `Peer is listening on port ${snapshot.port}. ${addressCount} interface address(es) are listed below; choose the address whose network matches the other device (LAN, VM bridge, or an authorized VPN).`,
       });
     });
   };
