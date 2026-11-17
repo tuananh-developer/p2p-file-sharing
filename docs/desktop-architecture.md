@@ -21,7 +21,7 @@ Java P2P Core
 Remote Java P2P Core
 ```
 
-File bytes flow only between Java peers over TCP. Electron/React carries control commands, metadata, progress and lifecycle events; it is not a file-content proxy.
+LAN file bytes flow directly between Java peers over TCP/TLS. Internet file bytes flow over a WebRTC DataChannel; the signaling service carries only short-lived room metadata and SDP/ICE signaling.
 
 ## Startup and Java distribution
 
@@ -49,9 +49,16 @@ Preload exposes typed methods only:
 - Files: list one peer's files and search connected peers.
 - Security: read the local TLS identity fingerprint, add a verified remote SHA-256 fingerprint to the trust list, and revoke a fingerprint.
 - Transfers: choose a destination folder and queue single- or multi-source ranged downloads, cancel, list transfers.
+- Internet transport: create/join an expiring invite room, obtain TURN credentials, open/read shared-file chunks, choose a save location, write/verify received chunks, and clean up temporary file handles.
 - Events: subscribe to Java backend events and receive an unsubscribe callback.
 
 There is no generic `send(command, payload)` or arbitrary channel argument exposed to the Renderer. Main validates ports, endpoint strings, UUIDs and file names again before dispatch. Native dialogs own the share and download directory selections.
+
+## Internet DataChannel file path
+
+The Renderer owns the WebRTC peer connection and ordered DataChannel. The HTTPS signaling service relays only authenticated room messages (offer, answer, ICE candidates and hangup); it never receives file bytes. Before file operations are enabled, both users compare the eight-digit safety code derived from the DTLS certificate fingerprints and confirm it.
+
+For sending, the Renderer asks Electron Main to open a file by name inside the configured shared directory. Main canonicalizes that directory, rejects path traversal and symlinks, hashes the file and exposes bounded, sequential chunk reads through allowlisted IPC handles. For receiving, Main opens a native save dialog, writes chunks to a mode-0600 temporary file, verifies the final SHA-256 digest and only then publishes the completed file. Internet transfers do not reuse Java TCP download/resume state; WebRTC resume is not implemented.
 
 ## BrowserWindow security
 
@@ -78,3 +85,13 @@ Auto binding listens on all local IPv4 interfaces, so operators should choose a 
 ## Multi-source transfer behavior
 
 The Renderer groups search hits by filename and advertised size and passes candidate peer IDs to transfer.downloadMulti. Java independently requests source metadata and only assembles bytes from peers with matching complete-file SHA-256. The Electron layer never handles file bytes. The transfer service uses 4 MiB logical ranges, at most eight concurrent range workers, offset-based writes into the existing .part staging file, retry-on-another-matching-peer, and a final full-file SHA-256 check before the no-overwrite rename.
+
+## Internet transport
+
+The desktop renderer uses Chromium's WebRTC implementation for Internet sessions. It creates a short-lived rendezvous room through the HTTPS signaling API, exchanges complete SDP offer/answer descriptions, and waits for ICE gathering to finish before forwarding SDP. Trickle ICE candidates are not currently used. WebRTC DataChannels carry file-control messages and bounded binary chunks; the signaling service never receives file bytes or local filesystem paths.
+
+The Java Core's peer UUID identifies each running backend session and is available even when its TCP listener is stopped. Internet-only sessions do not start the Java TCP listener. The Java TCP/TLS transport remains available for LAN and other directly reachable peers.
+
+Before file operations, each renderer reads the SHA-256 DTLS certificate fingerprints from its local and remote SDP, derives an eight-digit safety code, and requires both users to confirm the matching code over a separate trusted channel. WebRTC DTLS encrypts the DataChannel. The safety-code comparison is the application-layer check against a signaling intermediary substituting SDP. WebRTC safety-code approvals are session-scoped; the persistent RSA certificate pin store continues to protect the Java TLS transport.
+
+File sends use a reliable ordered DataChannel with 48 KiB binary chunks and at most four chunks outstanding. The receiver serializes writes through the Electron Main process to a user-selected temporary file, acknowledges completed chunks, verifies SHA-256, and atomically renames the completed file. The current Internet path does not resume interrupted transfers; Java TCP/LAN transfers retain their existing resumable-download support.

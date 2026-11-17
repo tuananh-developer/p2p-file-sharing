@@ -202,7 +202,7 @@ Mỗi yêu cầu có mã duy nhất để có thể liên kết với Use Case v
 | Mã     | Yêu cầu                       | Tiêu chí nghiệm thu                                                                                                                                                      |
 | ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | NFR-01 | Môi trường mục tiêu           | Ứng dụng phải có hướng dẫn cài đặt và khởi chạy trên Fedora Linux. Các phiên bản runtime và cách build phải được ghi trong README.                                       |
-| NFR-02 | Có thể build lặp lại          | Dự án Java phải build bằng Maven; frontend phải có lệnh cài đặt, kiểm tra và build được ghi rõ trong tài liệu. Không phụ thuộc vào đường dẫn tuyệt đối trên máy cá nhân. |
+| NFR-02 | Có thể build lặp lại          | Dự án Java phải build bằng Gradle; frontend phải có lệnh cài đặt, kiểm tra và build được ghi rõ trong tài liệu. Không phụ thuộc vào đường dẫn tuyệt đối trên máy cá nhân. |
 | NFR-03 | Không yêu cầu dịch vụ trả phí | Những chức năng cốt lõi phải chạy mà không cần dịch vụ cloud trả phí hoặc database bên ngoài.                                                                            |
 
 ## 4.2. Hiệu năng và tính đồng thời
