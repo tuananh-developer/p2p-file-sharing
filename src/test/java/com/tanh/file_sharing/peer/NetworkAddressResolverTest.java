@@ -1,6 +1,8 @@
 package com.tanh.file_sharing.peer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -40,11 +42,11 @@ class NetworkAddressResolverTest {
 
     @Test
     void recognizesTheSharedCgnatAddressRangeUsedByTailscale() throws Exception {
-        assertEquals(true, NetworkAddressResolver.isSharedCgnatAddress(
+        assertTrue(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.64.0.1")));
         assertEquals(true, NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.127.255.255")));
-        assertEquals(false, NetworkAddressResolver.isSharedCgnatAddress(
+        assertFalse(NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.63.255.255")));
         assertEquals(false, NetworkAddressResolver.isSharedCgnatAddress(
                 java.net.InetAddress.getByName("100.128.0.1")));
