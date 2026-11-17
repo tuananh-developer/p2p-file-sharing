@@ -469,7 +469,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("peer:start", async (_event, input: { bindAddress?: unknown; port?: unknown }) => {
     const bindAddress = input?.bindAddress === undefined
-      ? "127.0.0.1"
+      ? "0.0.0.0"
       : requireText(input.bindAddress, "bindAddress", 253);
     const port = requirePort(input?.port, "port", true);
     const data = await command<{ peer: unknown }>("peer.start", { bindAddress, port });
