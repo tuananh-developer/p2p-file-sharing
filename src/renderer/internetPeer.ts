@@ -167,7 +167,7 @@ async function stableTransferId(fileName: string, size: number, sha256: string):
   const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
   const value = hex.slice(0, 32).split("");
   value[12] = "4";
-  value[16] = ((Number.parseInt(value[16], 16) & 0x3) | 0x8).toString(16);
+  value[16] = ((Number.parseInt(value[16] ?? "0", 16) & 0x3) | 0x8).toString(16);
   const compact = value.join("");
   return compact.slice(0, 8) + "-" + compact.slice(8, 12) + "-" +
     compact.slice(12, 16) + "-" + compact.slice(16, 20) + "-" + compact.slice(20);
