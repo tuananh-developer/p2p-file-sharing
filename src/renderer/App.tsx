@@ -1551,7 +1551,10 @@ function App() {
                       {peer?.status === "RUNNING" &&
                       peer.networkAddresses?.length ? (
                         peer.networkAddresses.map((entry) => (
-                          <div className="address-entry" key={entry.address}>
+                          <div
+                            className="address-entry"
+                            key={`${entry.interfaceName}:${entry.address}`}
+                          >
                             <code>
                               {entry.address}:{peer.port}
                             </code>
