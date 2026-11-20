@@ -624,6 +624,7 @@ export class InternetPeerSession {
   }
 
   async cancelTransfer(): Promise<void> {
+    await this.messageQueue.catch(() => undefined);
     if (this.outgoing) {
       const transfer = this.outgoing;
       transfer.cancelled = true;
@@ -923,6 +924,7 @@ export class InternetPeerSession {
     this.closed = true;
     this.pollAbort?.abort();
     this.pollAbort = null;
+    await this.messageQueue.catch(() => undefined);
 
     if (notifyRemote && this.roomId && this.remotePeerId) {
       await this.request("/v1/rooms/" + this.roomId + "/messages", {
