@@ -56,7 +56,10 @@ interface FileAdapter {
   closeSharedFile(handleId: string): Promise<void>;
   getResumeOffset(input: { transferId: string; fileName: string; size: number; sha256: string }): Promise<number>;
   beginReceive(input: { transferId: string; fileName: string; size: number; sha256: string }): Promise<InternetReceiveHandle | null>;
-  writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<number>;
+  writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<{
+    nextOffset: number;
+    committedOffset: number;
+  }>;
   completeReceive(input: { handleId: string; sha256: string }): Promise<{ fileName: string; size: number; sha256: string }>;
   abortReceive(handleId: string): Promise<void>;
   suspendReceive(handleId: string): Promise<void>;
@@ -89,6 +92,7 @@ interface Incoming {
   size: number;
   hash: string;
   offset: number;
+  acknowledgedOffset: number;
 }
 
 function normalizeUrl(value: string): string {
@@ -587,7 +591,8 @@ export class InternetPeerSession {
       name: target.fileName,
       size: target.size,
       hash: offer.sha256,
-      offset: target.offset
+      offset: target.offset,
+      acknowledgedOffset: target.offset
     };
     this.incomingOffer = null;
     this.callbacks.onIncomingFile(null);
@@ -655,13 +660,21 @@ export class InternetPeerSession {
     if (chunk.byteLength !== header.length || header.offset !== transfer.offset) {
       throw new Error("File chunk is out of order or truncated.");
     }
-    transfer.offset = await this.files.writeReceivedChunk({
+    const writeResult = await this.files.writeReceivedChunk({
       handleId: transfer.handleId,
       offset: header.offset,
       chunk
     });
+    transfer.offset = writeResult.nextOffset;
     this.pendingChunk = null;
-    this.sendControl({ type: "file-ack", transferId: transfer.id, nextOffset: transfer.offset });
+    if (writeResult.committedOffset > transfer.acknowledgedOffset) {
+      transfer.acknowledgedOffset = writeResult.committedOffset;
+      this.sendControl({
+        type: "file-ack",
+        transferId: transfer.id,
+        nextOffset: writeResult.committedOffset
+      });
+    }
     this.callbacks.onProgress({
       transferId: transfer.id,
       fileName: transfer.name,
