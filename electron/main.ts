@@ -9,7 +9,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { open, realpath, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
 import type { BackendEvent, BackendStatusSnapshot, InternetReceiveHandle } from "./shared/contracts";
