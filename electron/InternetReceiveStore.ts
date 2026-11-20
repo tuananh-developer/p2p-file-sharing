@@ -15,6 +15,7 @@ import { createHash, randomUUID, type Hash } from "node:crypto";
 const FORMAT_VERSION = 1;
 const MAX_FILE_BYTES = 50 * 1024 * 1024 * 1024;
 const MAX_CHUNK_BYTES = 48 * 1024;
+const CHECKPOINT_BYTES = MAX_CHUNK_BYTES * 4;
 const MAX_MANIFEST_BYTES = 16 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
@@ -49,6 +50,7 @@ interface ActiveReceive extends InternetReceiveIdentity {
   manifestPath: string;
   handle: FileHandle;
   nextOffset: number;
+  persistedOffset: number;
   hash: Hash;
 }
 
@@ -318,6 +320,7 @@ export class InternetReceiveStore {
       manifestPath,
       handle,
       nextOffset: offset,
+      persistedOffset: offset,
       hash
     });
     this.activeTransfers.set(identity.transferId, handleId);
@@ -333,7 +336,7 @@ export class InternetReceiveStore {
     handleId: string;
     offset: number;
     chunk: Uint8Array;
-  }): Promise<number> {
+  }): Promise<{ nextOffset: number; committedOffset: number }> {
     const receive = this.active.get(input.handleId);
     if (!receive) throw new Error("The incoming file handle is no longer available.");
     if (
@@ -365,24 +368,41 @@ export class InternetReceiveStore {
         if (result.bytesWritten <= 0) throw new Error("Could not write the incoming file chunk.");
         written += result.bytesWritten;
       }
-      await receive.handle.sync();
-      const nextOffset = previousOffset + buffer.length;
-      await this.saveManifest(receive.manifestPath, {
-        version: FORMAT_VERSION,
-        transferId: receive.transferId,
-        fileName: receive.fileName,
-        size: receive.size,
-        sha256: receive.sha256,
-        receivedBytes: nextOffset
-      });
-      receive.hash.update(buffer);
-      receive.nextOffset = nextOffset;
-      return nextOffset;
     } catch (error) {
       await receive.handle.truncate(previousOffset).catch(() => undefined);
-      await receive.handle.sync().catch(() => undefined);
       throw error;
     }
+
+    receive.hash.update(buffer);
+    receive.nextOffset += buffer.length;
+    const shouldCommit = receive.nextOffset - receive.persistedOffset >= CHECKPOINT_BYTES ||
+      receive.nextOffset === receive.size;
+    if (shouldCommit) {
+      try {
+        await receive.handle.sync();
+        await this.saveManifest(receive.manifestPath, {
+          version: FORMAT_VERSION,
+          transferId: receive.transferId,
+          fileName: receive.fileName,
+          size: receive.size,
+          sha256: receive.sha256,
+          receivedBytes: receive.nextOffset
+        });
+        receive.persistedOffset = receive.nextOffset;
+      } catch (error) {
+        // The old manifest remains authoritative. Close this handle so a later
+        // begin() can truncate any uncommitted tail and rebuild the hash safely.
+        this.active.delete(input.handleId);
+        this.activeTransfers.delete(receive.transferId);
+        await receive.handle.close().catch(() => undefined);
+        throw error;
+      }
+    }
+
+    return {
+      nextOffset: receive.nextOffset,
+      committedOffset: receive.persistedOffset
+    };
   }
 
   async suspend(handleId: string): Promise<void> {
@@ -390,8 +410,22 @@ export class InternetReceiveStore {
     if (!receive) return;
     this.active.delete(handleId);
     this.activeTransfers.delete(receive.transferId);
-    await receive.handle.sync().catch(() => undefined);
-    await receive.handle.close().catch(() => undefined);
+    try {
+      if (receive.nextOffset > receive.persistedOffset) {
+        await receive.handle.sync();
+        await this.saveManifest(receive.manifestPath, {
+          version: FORMAT_VERSION,
+          transferId: receive.transferId,
+          fileName: receive.fileName,
+          size: receive.size,
+          sha256: receive.sha256,
+          receivedBytes: receive.nextOffset
+        });
+        receive.persistedOffset = receive.nextOffset;
+      }
+    } finally {
+      await receive.handle.close().catch(() => undefined);
+    }
   }
 
   async suspendAll(): Promise<void> {
@@ -419,8 +453,8 @@ export class InternetReceiveStore {
     if (!SHA256_PATTERN.test(normalizedHash) || normalizedHash !== receive.sha256) {
       throw new Error("The expected SHA-256 does not match the accepted file offer.");
     }
-    if (receive.nextOffset !== receive.size) {
-      throw new Error("The incoming file is incomplete; refusing to finalize it.");
+    if (receive.nextOffset !== receive.size || receive.persistedOffset !== receive.size) {
+      throw new Error("The incoming file is incomplete or its final checkpoint is not durable.");
     }
     const actualHash = receive.hash.digest("hex");
     if (actualHash !== normalizedHash) {
