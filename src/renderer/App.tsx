@@ -596,11 +596,14 @@ function App() {
           window.p2p.internet.readSharedFileChunk(input),
         closeSharedFile: (handleId) =>
           window.p2p.internet.closeSharedFile(handleId),
+        getResumeOffset: (input) =>
+          window.p2p.internet.getResumeOffset(input),
         beginReceive: (input) => window.p2p.internet.beginReceive(input),
         writeReceivedChunk: (input) =>
           window.p2p.internet.writeReceivedChunk(input),
         completeReceive: (input) => window.p2p.internet.completeReceive(input),
         abortReceive: (handleId) => window.p2p.internet.abortReceive(handleId),
+        suspendReceive: (handleId) => window.p2p.internet.suspendReceive(handleId),
       },
       {
         onState: setInternetState,
