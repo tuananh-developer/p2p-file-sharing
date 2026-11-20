@@ -9,6 +9,16 @@ import org.junit.jupiter.api.Test;
 class NetworkAddressResolverTest {
 
     @Test
+    void keepsIdenticalAddressesDistinctWhenTheyBelongToDifferentInterfaces() {
+        String ethernet = NetworkAddressResolver.interfaceAddressKey("eth0", "192.168.1.10");
+        String wifi = NetworkAddressResolver.interfaceAddressKey("wlan0", "192.168.1.10");
+
+        assertFalse(ethernet.equals(wifi));
+        assertEquals(ethernet,
+                NetworkAddressResolver.interfaceAddressKey("eth0", "192.168.1.10"));
+    }
+
+    @Test
     void identifiesTailscaleInterfaceSeparatelyFromOtherVpnInterfaces() {
         assertEquals("VPN · Tailscale",
                 NetworkAddressResolver.classifyInterface("tailscale0", "Tailscale", true));
