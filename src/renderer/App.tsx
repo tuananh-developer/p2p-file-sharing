@@ -596,11 +596,14 @@ function App() {
           window.p2p.internet.readSharedFileChunk(input),
         closeSharedFile: (handleId) =>
           window.p2p.internet.closeSharedFile(handleId),
+        getResumeOffset: (input) =>
+          window.p2p.internet.getResumeOffset(input),
         beginReceive: (input) => window.p2p.internet.beginReceive(input),
         writeReceivedChunk: (input) =>
           window.p2p.internet.writeReceivedChunk(input),
         completeReceive: (input) => window.p2p.internet.completeReceive(input),
         abortReceive: (handleId) => window.p2p.internet.abortReceive(handleId),
+        suspendReceive: (handleId) => window.p2p.internet.suspendReceive(handleId),
       },
       {
         onState: setInternetState,
@@ -1861,6 +1864,12 @@ function App() {
                         {formatBytes(incomingInternetFile.size)} · SHA-256
                         verification required
                       </small>
+                      {incomingInternetFile.resumeOffset > 0 && (
+                        <small className="resume-hint">
+                          Resume available: {formatBytes(incomingInternetFile.resumeOffset)} already received
+                          ({Math.floor(incomingInternetFile.resumeOffset / Math.max(1, incomingInternetFile.size) * 100)}%)
+                        </small>
+                      )}
                       <code>{incomingInternetFile.sha256}</code>
                     </div>
                     <div className="row-actions">

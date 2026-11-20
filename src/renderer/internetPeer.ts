@@ -20,6 +20,7 @@ export interface InternetIncomingFileOffer {
   fileName: string;
   size: number;
   sha256: string;
+  resumeOffset: number;
 }
 
 export interface InternetTransferProgress {
@@ -53,10 +54,15 @@ interface FileAdapter {
   openSharedFile(fileName: string): Promise<InternetSharedFileHandle>;
   readSharedFileChunk(input: { handleId: string; offset: number; length: number }): Promise<Uint8Array>;
   closeSharedFile(handleId: string): Promise<void>;
-  beginReceive(input: { fileName: string; size: number }): Promise<InternetReceiveHandle | null>;
-  writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<number>;
+  getResumeOffset(input: { transferId: string; fileName: string; size: number; sha256: string }): Promise<number>;
+  beginReceive(input: { transferId: string; fileName: string; size: number; sha256: string }): Promise<InternetReceiveHandle | null>;
+  writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<{
+    nextOffset: number;
+    committedOffset: number;
+  }>;
   completeReceive(input: { handleId: string; sha256: string }): Promise<{ fileName: string; size: number; sha256: string }>;
   abortReceive(handleId: string): Promise<void>;
+  suspendReceive(handleId: string): Promise<void>;
 }
 
 interface Callbacks {
@@ -86,6 +92,7 @@ interface Incoming {
   size: number;
   hash: string;
   offset: number;
+  acknowledgedOffset: number;
 }
 
 function normalizeUrl(value: string): string {
@@ -150,6 +157,20 @@ function decodeInvite(value: string): Invite {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function stableTransferId(fileName: string, size: number, sha256: string): Promise<string> {
+  const identity = new TextEncoder().encode(
+    "p2p-file-sharing-internet-resume-v1\\0" + fileName + "\\0" + size + "\\0" + sha256.toLowerCase()
+  );
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", identity));
+  const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const value = hex.slice(0, 32).split("");
+  value[12] = "4";
+  value[16] = ((Number.parseInt(value[16] ?? "0", 16) & 0x3) | 0x8).toString(16);
+  const compact = value.join("");
+  return compact.slice(0, 8) + "-" + compact.slice(8, 12) + "-" +
+    compact.slice(12, 16) + "-" + compact.slice(16, 20) + "-" + compact.slice(20);
 }
 
 function parseFingerprint(sdp: string): string {
@@ -511,7 +532,13 @@ export class InternetPeerSession {
     if (!this.secure()) throw new Error("Both devices must confirm the matching safety code first.");
     if (this.outgoing || this.incoming || this.incomingOffer) throw new Error("Finish the current Internet transfer first.");
     const source = await this.files.openSharedFile(fileName);
-    const transferId = crypto.randomUUID();
+    let transferId: string;
+    try {
+      transferId = await stableTransferId(source.fileName, source.size, source.sha256);
+    } catch (error) {
+      await this.files.closeSharedFile(source.handleId).catch(() => undefined);
+      throw error;
+    }
     this.outgoing = {
       id: transferId,
       handleId: source.handleId,
@@ -551,7 +578,12 @@ export class InternetPeerSession {
   async acceptIncomingFile(): Promise<void> {
     const offer = this.incomingOffer;
     if (!offer || !this.secure()) throw new Error("There is no verified incoming file offer.");
-    const target = await this.files.beginReceive({ fileName: offer.fileName, size: offer.size });
+    const target = await this.files.beginReceive({
+      transferId: offer.transferId,
+      fileName: offer.fileName,
+      size: offer.size,
+      sha256: offer.sha256
+    });
     if (!target) return;
     this.incoming = {
       id: offer.transferId,
@@ -559,7 +591,8 @@ export class InternetPeerSession {
       name: target.fileName,
       size: target.size,
       hash: offer.sha256,
-      offset: 0
+      offset: target.offset,
+      acknowledgedOffset: target.offset
     };
     this.incomingOffer = null;
     this.callbacks.onIncomingFile(null);
@@ -567,12 +600,18 @@ export class InternetPeerSession {
       transferId: offer.transferId,
       fileName: target.fileName,
       direction: "RECEIVING",
-      transferredBytes: 0,
+      transferredBytes: target.offset,
       totalBytes: offer.size,
       status: "TRANSFERRING",
-      detail: "Receiving file from the remote peer."
+      detail: target.offset > 0
+        ? "Resuming from a durable checkpoint saved by an earlier session."
+        : "Receiving file from the remote peer."
     });
-    this.sendControl({ type: "file-accept", transferId: offer.transferId });
+    this.sendControl({
+      type: "file-accept",
+      transferId: offer.transferId,
+      nextOffset: target.offset
+    });
   }
 
   rejectIncomingFile(): void {
@@ -585,6 +624,7 @@ export class InternetPeerSession {
   }
 
   async cancelTransfer(): Promise<void> {
+    await this.messageQueue.catch(() => undefined);
     if (this.outgoing) {
       const transfer = this.outgoing;
       transfer.cancelled = true;
@@ -621,13 +661,21 @@ export class InternetPeerSession {
     if (chunk.byteLength !== header.length || header.offset !== transfer.offset) {
       throw new Error("File chunk is out of order or truncated.");
     }
-    transfer.offset = await this.files.writeReceivedChunk({
+    const writeResult = await this.files.writeReceivedChunk({
       handleId: transfer.handleId,
       offset: header.offset,
       chunk
     });
+    transfer.offset = writeResult.nextOffset;
     this.pendingChunk = null;
-    this.sendControl({ type: "file-ack", transferId: transfer.id, nextOffset: transfer.offset });
+    if (writeResult.committedOffset > transfer.acknowledgedOffset) {
+      transfer.acknowledgedOffset = writeResult.committedOffset;
+      this.sendControl({
+        type: "file-ack",
+        transferId: transfer.id,
+        nextOffset: writeResult.committedOffset
+      });
+    }
     this.callbacks.onProgress({
       transferId: transfer.id,
       fileName: transfer.name,
@@ -665,22 +713,56 @@ export class InternetPeerSession {
           this.sendControl({ type: "file-reject", transferId });
           return;
         }
-        this.incomingOffer = { transferId, fileName, size, sha256 };
+        let resumeOffset = 0;
+        try {
+          resumeOffset = await this.files.getResumeOffset({ transferId, fileName, size, sha256 });
+        } catch (error) {
+          this.callbacks.onError("Could not validate the saved partial transfer: " + errorText(error));
+          this.sendControl({ type: "file-reject", transferId });
+          return;
+        }
+        if (!Number.isSafeInteger(resumeOffset) || resumeOffset < 0 || resumeOffset > size ||
+            (resumeOffset !== size && resumeOffset % CHUNK_BYTES !== 0)) {
+          this.callbacks.onError("The saved partial transfer has an invalid checkpoint and was not resumed.");
+          this.sendControl({ type: "file-reject", transferId });
+          return;
+        }
+        this.incomingOffer = { transferId, fileName, size, sha256, resumeOffset };
         this.callbacks.onIncomingFile(this.incomingOffer);
         this.callbacks.onProgress({
           transferId,
           fileName,
           direction: "RECEIVING",
-          transferredBytes: 0,
+          transferredBytes: resumeOffset,
           totalBytes: size,
           status: "OFFERED",
-          detail: "Waiting for you to accept the incoming file."
+          detail: resumeOffset > 0
+            ? "A saved partial transfer is available to resume."
+            : "Waiting for you to accept the incoming file."
         });
         break;
       }
-      case "file-accept":
-        if (this.outgoing?.id === message.transferId) await this.pump();
+      case "file-accept": {
+        const transfer = this.outgoing;
+        if (!transfer || transfer.id !== message.transferId) break;
+        const nextOffset = message.nextOffset === undefined ? 0 : message.nextOffset;
+        if (
+          typeof nextOffset !== "number" ||
+          !Number.isSafeInteger(nextOffset) ||
+          nextOffset < transfer.acked ||
+          nextOffset > transfer.size ||
+          (nextOffset !== transfer.size && nextOffset % CHUNK_BYTES !== 0)
+        ) {
+          throw new Error("The recipient requested an invalid resume offset.");
+        }
+        if (transfer.offset > 0 && nextOffset > transfer.offset) {
+          throw new Error("The recipient requested bytes that have not been sent in this session.");
+        }
+        transfer.offset = Math.max(transfer.offset, nextOffset);
+        transfer.acked = Math.max(transfer.acked, nextOffset);
+        await this.pump();
         break;
+      }
       case "file-reject":
         {
           const transfer = this.outgoing;
@@ -842,6 +924,7 @@ export class InternetPeerSession {
     this.closed = true;
     this.pollAbort?.abort();
     this.pollAbort = null;
+    await this.messageQueue.catch(() => undefined);
 
     if (notifyRemote && this.roomId && this.remotePeerId) {
       await this.request("/v1/rooms/" + this.roomId + "/messages", {
@@ -859,7 +942,7 @@ export class InternetPeerSession {
       this.outgoing = null;
     }
     if (this.incoming) {
-      await this.files.abortReceive(this.incoming.handleId).catch(() => undefined);
+      await this.files.suspendReceive(this.incoming.handleId).catch(() => undefined);
       this.incoming = null;
     }
     this.channel?.close();

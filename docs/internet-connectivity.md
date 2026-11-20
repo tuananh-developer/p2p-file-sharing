@@ -22,7 +22,7 @@ This is separate from the existing Java TCP listener. STUN discovers candidate a
 - [x] Reliable ordered DataChannel file streaming with a four-chunk acknowledgement window.
 - [x] File offers, recipient save dialog, cancellation and final SHA-256 verification.
 - [x] DTLS fingerprint-derived eight-digit safety code; both users must confirm the same code before file operations.
-- [ ] WebRTC interrupted-transfer resume. The existing TCP/LAN transfer resume remains available.
+- [x] WebRTC interrupted-transfer resume using durable receiver checkpoints. The existing TCP/LAN transfer resume remains available.
 - [ ] Production deployment with a real public DNS name, HTTPS certificate, VPS firewall and TURN certificate.
 - [ ] Manual end-to-end tests across independent networks, including school NAT, mobile hotspot, TURN-only and restrictive firewalls.
 
