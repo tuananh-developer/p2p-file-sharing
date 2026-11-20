@@ -2,7 +2,7 @@
 
 Ứng dụng desktop chia sẻ tập tin ngang hàng (Peer-to-Peer File Sharing). Electron Main/Preload quản lý Java process và IPC; React chỉ gọi API được expose an toàn qua preload. Java Core tiếp tục chịu trách nhiệm xử lý P2P.
 
-> **Trạng thái:** Java Core hỗ trợ P2P TCP/TLS cho LAN hoặc địa chỉ có thể truy cập trực tiếp, catalog file, tải nhiều nguồn theo range, SHA-256 và khôi phục download sau restart. Desktop còn có đường Internet WebRTC DataChannel: mời peer bằng room code, ICE/STUN, TURN fallback, xác minh mã bảo mật từ DTLS fingerprint và truyền file theo chunk có ACK + SHA-256. Public Internet yêu cầu triển khai signaling HTTPS; NAT nghiêm ngặt yêu cầu TURN. WebRTC resume và kiểm thử thực tế qua nhiều mạng vẫn chưa hoàn tất.
+> **Trạng thái:** Java Core hỗ trợ P2P TCP/TLS cho LAN hoặc địa chỉ có thể truy cập trực tiếp, catalog file, tải nhiều nguồn theo range, SHA-256 và khôi phục download sau restart. Desktop còn có đường Internet WebRTC DataChannel: mời peer bằng room code, ICE/STUN, TURN fallback, xác minh mã bảo mật từ DTLS fingerprint và truyền file theo chunk có ACK + SHA-256. Public Internet yêu cầu triển khai signaling HTTPS; NAT nghiêm ngặt yêu cầu TURN. WebRTC hỗ trợ tiếp tục truyền từ checkpoint bền vững sau khi phiên hoặc ứng dụng bị ngắt; kiểm thử thực tế qua nhiều mạng vẫn cần thực hiện với VPS/TURN và thiết bị độc lập.
 
 ## Tech stack
 
@@ -255,4 +255,4 @@ Deployment and security details: [docs/internet-connectivity.md](docs/internet-c
 - [ ] Verify desktop packaging on Fedora through a full manual multi-peer LAN test
 - [x] Add WebRTC signaling and DataChannel file streaming path for Internet peers
 - [ ] Run manual cross-network tests against a deployed public signaling/TURN service
-- [ ] Add resumable WebRTC transfers
+- [x] Add resumable WebRTC transfers with durable receiver checkpoints across app/session restarts
