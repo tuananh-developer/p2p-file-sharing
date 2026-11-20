@@ -43,12 +43,13 @@ test("resumes a partial receive after a fresh store instance and verifies the fi
     assert.equal(started.offset, 0);
 
     const checkpoint = 48 * 1024;
-    const nextOffset = await first.write({
+    const writeResult = await first.write({
       handleId: started.handleId,
       offset: 0,
       chunk: data.subarray(0, checkpoint)
     });
-    assert.equal(nextOffset, checkpoint);
+    assert.equal(writeResult.nextOffset, checkpoint);
+    assert.equal(writeResult.committedOffset, 0);
     await first.suspend(started.handleId);
 
     const afterRestart = new InternetReceiveStore(storage);
@@ -68,6 +69,31 @@ test("resumes a partial receive after a fresh store instance and verifies the fi
     assert.equal(completed.size, data.length);
     assert.deepEqual(await readFile(join(destination, file.fileName)), data);
     assert.deepEqual(await readdir(storage), []);
+  });
+});
+
+test("commits durable resume checkpoints every four chunks", async () => {
+  await withStore(async ({ storage, destination }) => {
+    const data = Buffer.alloc(5 * 48 * 1024, 0x44);
+    const file = identity(data);
+    const store = new InternetReceiveStore(storage);
+    const started = await store.begin({ ...file, targetPath: join(destination, file.fileName) });
+    let offset = 0;
+    for (let index = 0; index < 4; index += 1) {
+      const result = await store.write({
+        handleId: started.handleId,
+        offset,
+        chunk: data.subarray(offset, offset + 48 * 1024)
+      });
+      offset = result.nextOffset;
+      assert.equal(result.committedOffset, index === 3 ? 4 * 48 * 1024 : 0);
+    }
+    await store.suspend(started.handleId);
+    const reopened = new InternetReceiveStore(storage);
+    assert.equal(await reopened.inspect(file), offset);
+    const resumed = await reopened.begin({ ...file, targetPath: join(destination, file.fileName) });
+    assert.equal(resumed.offset, offset);
+    await reopened.abort(resumed.handleId);
   });
 });
 
