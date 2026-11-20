@@ -1861,6 +1861,12 @@ function App() {
                         {formatBytes(incomingInternetFile.size)} · SHA-256
                         verification required
                       </small>
+                      {incomingInternetFile.resumeOffset > 0 && (
+                        <small className="resume-hint">
+                          Resume available: {formatBytes(incomingInternetFile.resumeOffset)} already received
+                          ({Math.floor(incomingInternetFile.resumeOffset / Math.max(1, incomingInternetFile.size) * 100)}%)
+                        </small>
+                      )}
                       <code>{incomingInternetFile.sha256}</code>
                     </div>
                     <div className="row-actions">
