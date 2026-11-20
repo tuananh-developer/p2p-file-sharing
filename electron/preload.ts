@@ -44,6 +44,8 @@ const api: P2PBridgeApi = {
   internet: {
     openSharedFile: (fileName) =>
       ipcRenderer.invoke("internet:open-shared-file", fileName),
+    getResumeOffset: (input) =>
+      ipcRenderer.invoke("internet:get-resume-offset", input),
     readSharedFileChunk: (input) =>
       ipcRenderer.invoke("internet:read-shared-file-chunk", input),
     closeSharedFile: (handleId) =>
@@ -56,6 +58,8 @@ const api: P2PBridgeApi = {
       ipcRenderer.invoke("internet:complete-receive", input),
     abortReceive: (handleId) =>
       ipcRenderer.invoke("internet:abort-receive", handleId),
+    suspendReceive: (handleId) =>
+      ipcRenderer.invoke("internet:suspend-receive", handleId),
   },
   onEvent: (listener) => {
     const handler = (
