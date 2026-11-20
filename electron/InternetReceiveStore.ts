@@ -1,13 +1,11 @@
 import { constants as fsConstants } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   link,
   mkdir,
   open,
   rename,
-  stat,
   unlink,
   type FileHandle
 } from "node:fs/promises";
@@ -466,9 +464,9 @@ export class InternetReceiveStore {
 
       // link() fails with EEXIST, so a file created after the save dialog is never overwritten.
       await link(temporaryPath, receive.targetPath);
-      await unlink(temporaryPath);
-      await unlink(receive.partPath);
-      await unlink(receive.manifestPath);
+      await unlink(temporaryPath).catch(() => undefined);
+      await unlink(receive.partPath).catch(() => undefined);
+      await unlink(receive.manifestPath).catch(() => undefined);
       return {
         fileName: basename(receive.targetPath),
         size: receive.size,
