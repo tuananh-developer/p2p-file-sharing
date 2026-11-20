@@ -214,7 +214,7 @@ async function writeInternetReceiveChunk(input: {
   handleId?: unknown;
   offset?: unknown;
   chunk?: unknown;
-}): Promise<number> {
+}): Promise<{ nextOffset: number; committedOffset: number }> {
   const handleId = requireHandleId(input?.handleId);
   if (typeof input?.offset !== "number" || !Number.isSafeInteger(input.offset) || input.offset < 0) {
     throw new Error("A valid incoming chunk offset is required.");
