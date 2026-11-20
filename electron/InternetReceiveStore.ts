@@ -130,7 +130,9 @@ export class InternetReceiveStore {
         if (info.isSymbolicLink() || !info.isDirectory()) {
           throw new Error("Internet receive storage is not a private directory.");
         }
-        await chmod(this.directory, 0o700);
+        if (process.platform !== "win32") {
+          await chmod(this.directory, 0o700);
+        }
       })();
     }
     await this.ready;
@@ -462,10 +464,15 @@ export class InternetReceiveStore {
       throw new Error("The received file failed SHA-256 verification.");
     }
 
-    await receive.handle.sync();
-    await receive.handle.close();
     this.active.delete(handleId);
     this.activeTransfers.delete(receive.transferId);
+    try {
+      await receive.handle.sync();
+      await receive.handle.close();
+    } catch (error) {
+      await receive.handle.close().catch(() => undefined);
+      throw error;
+    }
 
     const temporaryPath = join(
       dirname(receive.targetPath),
@@ -474,7 +481,16 @@ export class InternetReceiveStore {
     let source: FileHandle | null = null;
     let destination: FileHandle | null = null;
     try {
-      source = await open(receive.partPath, fsConstants.O_RDONLY);
+      const partInfo = await lstat(receive.partPath);
+      if (partInfo.isSymbolicLink() || !partInfo.isFile()) {
+        throw new Error("The staged Internet transfer is not a regular file.");
+      }
+      const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+      source = await open(receive.partPath, fsConstants.O_RDONLY | noFollow);
+      const openedPart = await source.stat();
+      if (!openedPart.isFile() || openedPart.dev !== partInfo.dev || openedPart.ino !== partInfo.ino) {
+        throw new Error("The staged Internet transfer changed while it was opened.");
+      }
       destination = await open(temporaryPath, "wx", 0o600);
       const buffer = Buffer.allocUnsafe(1024 * 1024);
       let offset = 0;
