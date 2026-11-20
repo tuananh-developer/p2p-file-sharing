@@ -164,7 +164,10 @@ export interface P2PBridgeApi {
     readSharedFileChunk(input: { handleId: string; offset: number; length: number }): Promise<Uint8Array>;
     closeSharedFile(handleId: string): Promise<void>;
     beginReceive(input: { transferId: string; fileName: string; size: number; sha256: string }): Promise<InternetReceiveHandle | null>;
-    writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<number>;
+    writeReceivedChunk(input: { handleId: string; offset: number; chunk: Uint8Array }): Promise<{
+      nextOffset: number;
+      committedOffset: number;
+    }>;
     completeReceive(input: { handleId: string; sha256: string }): Promise<{ fileName: string; size: number; sha256: string }>;
     abortReceive(handleId: string): Promise<void>;
     suspendReceive(handleId: string): Promise<void>;
