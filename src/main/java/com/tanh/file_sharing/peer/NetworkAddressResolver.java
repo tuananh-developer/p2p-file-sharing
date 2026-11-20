@@ -27,6 +27,7 @@ public final class NetworkAddressResolver {
     public static List<String> addressesFor(String bindAddress) {
         return networkAddressesFor(bindAddress).stream()
                 .map(NetworkAddressSnapshot::address)
+                .distinct()
                 .toList();
     }
 
@@ -53,7 +54,9 @@ public final class NetworkAddressResolver {
                                 && !address.isLoopbackAddress()
                                 && !address.isLinkLocalAddress()
                                 && !address.isAnyLocalAddress()) {
-                            addresses.putIfAbsent(address.getHostAddress(), describe(address, networkInterface));
+                            addresses.putIfAbsent(
+                                    interfaceAddressKey(networkInterface.getName(), address.getHostAddress()),
+                                    describe(address, networkInterface));
                         }
                     }
                 } catch (SocketException ignored) {
@@ -97,6 +100,10 @@ public final class NetworkAddressResolver {
                 displayName == null || displayName.isBlank() ? name : displayName,
                 category,
                 virtual);
+    }
+
+    static String interfaceAddressKey(String interfaceName, String address) {
+        return interfaceName + "|" + address;
     }
 
     static boolean isSharedCgnatAddress(InetAddress address) {
