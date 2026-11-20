@@ -9,10 +9,11 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { link, lstat, open, realpath, unlink, type FileHandle } from "node:fs/promises";
+import { open, realpath, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { JsonLineClient } from "./backend/JsonLineClient";
-import type { BackendEvent, BackendStatusSnapshot } from "./shared/contracts";
+import type { BackendEvent, BackendStatusSnapshot, InternetReceiveHandle } from "./shared/contracts";
+import { InternetReceiveStore } from "./InternetReceiveStore";
 
 const JAVA_MAIN_CLASS = "com.tanh.file_sharing.FileSharingApplication";
 const bridge = new JsonLineClient();
@@ -33,18 +34,15 @@ interface OutgoingFileHandle {
   sha256: string;
 }
 
-interface IncomingFileHandle {
-  handle: FileHandle;
-  fileName: string;
-  targetPath: string;
-  temporaryPath: string;
-  size: number;
-  nextOffset: number;
-  hash: ReturnType<typeof createHash>;
-}
-
 const outgoingFileHandles = new Map<string, OutgoingFileHandle>();
-const incomingFileHandles = new Map<string, IncomingFileHandle>();
+let internetReceiveStore: InternetReceiveStore | null = null;
+
+function getInternetReceiveStore(): InternetReceiveStore {
+  if (!internetReceiveStore) {
+    internetReceiveStore = new InternetReceiveStore(join(app.getPath("userData"), "internet-transfer-resume"));
+  }
+  return internetReceiveStore;
+}
 
 function requireHandleId(value: unknown): string {
   return requireUuid(value, "handleId");
@@ -160,16 +158,35 @@ async function closeInternetSharedFile(handleIdValue: unknown): Promise<void> {
   await source.handle.close();
 }
 
-async function beginInternetReceive(input: { fileName?: unknown; size?: unknown }): Promise<{
-  handleId: string;
-  fileName: string;
-  size: number;
-} | null> {
+async function getInternetResumeOffset(input: {
+  transferId?: unknown;
+  fileName?: unknown;
+  size?: unknown;
+  sha256?: unknown;
+}): Promise<number> {
+  const transferId = requireUuid(input?.transferId, "transferId");
   const fileName = requireFileName(input?.fileName);
   const size = input?.size;
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || size > MAX_INTERNET_FILE_BYTES) {
     throw new Error("The incoming file size is invalid or exceeds the 50 GiB transfer limit.");
   }
+  const sha256 = requireFingerprint(input?.sha256).toLowerCase();
+  return getInternetReceiveStore().inspect({ transferId, fileName, size, sha256 });
+}
+
+async function beginInternetReceive(input: {
+  transferId?: unknown;
+  fileName?: unknown;
+  size?: unknown;
+  sha256?: unknown;
+}): Promise<InternetReceiveHandle | null> {
+  const transferId = requireUuid(input?.transferId, "transferId");
+  const fileName = requireFileName(input?.fileName);
+  const size = input?.size;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || size > MAX_INTERNET_FILE_BYTES) {
+    throw new Error("The incoming file size is invalid or exceeds the 50 GiB transfer limit.");
+  }
+  const sha256 = requireFingerprint(input?.sha256).toLowerCase();
 
   const result = mainWindow
     ? await dialog.showSaveDialog(mainWindow, {
@@ -177,23 +194,20 @@ async function beginInternetReceive(input: { fileName?: unknown; size?: unknown 
       defaultPath: fileName,
       buttonLabel: "Save file"
     })
-    : await dialog.showSaveDialog({ title: "Save incoming peer file", defaultPath: fileName, buttonLabel: "Save file" });
+    : await dialog.showSaveDialog({
+      title: "Save incoming peer file",
+      defaultPath: fileName,
+      buttonLabel: "Save file"
+    });
   if (result.canceled || !result.filePath) return null;
 
-  const targetPath = resolve(result.filePath);
-  const handleId = randomUUID();
-  const temporaryPath = join(dirname(targetPath), "." + basename(targetPath) + "." + handleId + ".part");
-  const handle = await open(temporaryPath, "wx", 0o600);
-  incomingFileHandles.set(handleId, {
-    handle,
-    fileName: basename(targetPath),
-    targetPath,
-    temporaryPath,
+  return getInternetReceiveStore().begin({
+    transferId,
+    fileName,
     size,
-    nextOffset: 0,
-    hash: createHash("sha256")
+    sha256,
+    targetPath: resolve(result.filePath)
   });
-  return { handleId, fileName: basename(targetPath), size };
 }
 
 async function writeInternetReceiveChunk(input: {
@@ -202,37 +216,25 @@ async function writeInternetReceiveChunk(input: {
   chunk?: unknown;
 }): Promise<number> {
   const handleId = requireHandleId(input?.handleId);
-  const receive = incomingFileHandles.get(handleId);
-  if (!receive) throw new Error("The incoming file handle is no longer available.");
-  const chunk = input?.chunk;
-  if (!(chunk instanceof Uint8Array) || chunk.byteLength < 1 || chunk.byteLength > MAX_INTERNET_CHUNK_BYTES) {
-    throw new Error("An incoming chunk must contain between 1 byte and 48 KiB.");
+  if (typeof input?.offset !== "number" || !Number.isSafeInteger(input.offset) || input.offset < 0) {
+    throw new Error("A valid incoming chunk offset is required.");
   }
-  const offset = input?.offset;
-  if (typeof offset !== "number" || !Number.isSafeInteger(offset) ||
-      offset !== receive.nextOffset || offset + chunk.byteLength > receive.size) {
-    throw new Error("Incoming file chunks must be sequential and within the advertised file size.");
+  if (!(input?.chunk instanceof Uint8Array)) {
+    throw new Error("Incoming file data must be a byte array.");
   }
+  return getInternetReceiveStore().write({
+    handleId,
+    offset: input.offset,
+    chunk: input.chunk
+  });
+}
 
-  const buffer = Buffer.from(chunk);
-  let written = 0;
-  while (written < buffer.length) {
-    const result = await receive.handle.write(buffer, written, buffer.length - written, offset + written);
-    if (result.bytesWritten <= 0) throw new Error("Could not write the incoming file chunk.");
-    written += result.bytesWritten;
-  }
-  receive.hash.update(buffer);
-  receive.nextOffset += buffer.length;
-  return receive.nextOffset;
+async function suspendInternetReceive(handleIdValue: unknown): Promise<void> {
+  return getInternetReceiveStore().suspend(requireHandleId(handleIdValue));
 }
 
 async function abortInternetReceive(handleIdValue: unknown): Promise<void> {
-  const handleId = requireHandleId(handleIdValue);
-  const receive = incomingFileHandles.get(handleId);
-  if (!receive) return;
-  incomingFileHandles.delete(handleId);
-  await receive.handle.close().catch(() => undefined);
-  await unlink(receive.temporaryPath).catch(() => undefined);
+  return getInternetReceiveStore().abort(requireHandleId(handleIdValue));
 }
 
 async function completeInternetReceive(input: { handleId?: unknown; sha256?: unknown }): Promise<{
@@ -241,45 +243,14 @@ async function completeInternetReceive(input: { handleId?: unknown; sha256?: unk
   sha256: string;
 }> {
   const handleId = requireHandleId(input?.handleId);
-  const receive = incomingFileHandles.get(handleId);
-  if (!receive) throw new Error("The incoming file handle is no longer available.");
   const expectedHash = requireFingerprint(input?.sha256).toLowerCase();
-  if (receive.nextOffset !== receive.size) {
-    throw new Error("The incoming file is incomplete; refusing to finalize it.");
-  }
-  const actualHash = receive.hash.digest("hex");
-  if (actualHash !== expectedHash) {
-    await abortInternetReceive(handleId);
-    throw new Error("The received file failed SHA-256 verification.");
-  }
-
-  await receive.handle.sync();
-  await receive.handle.close();
-  try {
-    // link() publishes the verified temporary file atomically and fails with EEXIST
-    // instead of replacing a destination that appeared after the save dialog.
-    await link(receive.temporaryPath, receive.targetPath);
-  } catch (error) {
-    incomingFileHandles.delete(handleId);
-    await unlink(receive.temporaryPath).catch(() => undefined);
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EEXIST") {
-      throw new Error("The destination file already exists; refusing to overwrite it.");
-    }
-    throw error;
-  }
-  incomingFileHandles.delete(handleId);
-  await unlink(receive.temporaryPath).catch((error: unknown) => {
-    console.error("[Electron] Could not remove a completed Internet-transfer temporary file:", error);
-  });
-  return { fileName: receive.fileName, size: receive.size, sha256: actualHash };
+  return getInternetReceiveStore().complete(handleId, expectedHash);
 }
 
 async function cleanupInternetFileHandles(): Promise<void> {
   const outgoing = [...outgoingFileHandles.keys()];
-  const incoming = [...incomingFileHandles.keys()];
   await Promise.all(outgoing.map((handleId) => closeInternetSharedFile(handleId).catch(() => undefined)));
-  await Promise.all(incoming.map((handleId) => abortInternetReceive(handleId).catch(() => undefined)));
+  await internetReceiveStore?.suspendAll().catch(() => undefined);
 }
 
 function publishEvent(event: BackendEvent): void {
@@ -663,8 +634,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle("internet:close-shared-file", (_event, handleId: unknown) =>
     closeInternetSharedFile(handleId));
 
-  ipcMain.handle("internet:begin-receive", (_event, input: { fileName?: unknown; size?: unknown }) =>
-    beginInternetReceive(input ?? {}));
+  ipcMain.handle("internet:get-resume-offset", (_event, input: {
+    transferId?: unknown; fileName?: unknown; size?: unknown; sha256?: unknown;
+  }) => getInternetResumeOffset(input ?? {}));
+
+  ipcMain.handle("internet:begin-receive", (_event, input: {
+    transferId?: unknown; fileName?: unknown; size?: unknown; sha256?: unknown;
+  }) => beginInternetReceive(input ?? {}));
 
   ipcMain.handle("internet:write-received-chunk", (_event, input: {
     handleId?: unknown; offset?: unknown; chunk?: unknown;
@@ -675,6 +651,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("internet:abort-receive", (_event, handleId: unknown) =>
     abortInternetReceive(handleId));
+
+  ipcMain.handle("internet:suspend-receive", (_event, handleId: unknown) =>
+    suspendInternetReceive(handleId));
 
   ipcMain.handle("transfer:resume", async (_event, input: { taskId?: unknown; peerIds?: unknown }) => {
     requireBackendReady();
