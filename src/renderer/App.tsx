@@ -331,15 +331,12 @@ function App() {
     void runAction("peer-start", async () => {
       const snapshot = await window.p2p.peer.start({ bindAddress, port });
       setPeer(snapshot);
-      const reachableAddresses = snapshot.addresses.map(
-        (address) => `${address}:${snapshot.port}`,
-      );
+      const addressCount =
+        snapshot.networkAddresses?.length ?? snapshot.addresses.length;
       setNotice({
         kind: "success",
         message:
-          reachableAddresses.length > 0
-            ? `Peer is listening. Share one of these addresses: ${reachableAddresses.join(", ")}.`
-            : `Peer is listening on ${snapshot.bindAddress}:${snapshot.port}.`,
+          `Peer is listening on port ${snapshot.port}. ${addressCount} interface address(es) are listed below; choose the address whose network matches the other device (LAN, VM bridge, or an authorized VPN).`,
       });
     });
   };
@@ -1549,19 +1546,44 @@ function App() {
                     <code>{peer?.peerId ?? "Not started"}</code>
                   </div>
                   <div className="detail-line">
-                    <small>Reachable addresses</small>
+                    <small>Network interface addresses</small>
                     <div className="address-list">
                       {peer?.status === "RUNNING" &&
-                      peer.addresses.length > 0 ? (
+                      peer.networkAddresses?.length ? (
+                        peer.networkAddresses.map((entry) => (
+                          <div
+                            className="address-entry"
+                            key={`${entry.interfaceName}:${entry.address}`}
+                          >
+                            <code>
+                              {entry.address}:{peer.port}
+                            </code>
+                            <small>
+                              {entry.category} · {entry.interfaceName}
+                              {entry.displayName !== entry.interfaceName
+                                ? ` — ${entry.displayName}`
+                                : ""}
+                              {entry.virtual ? " · virtual" : ""}
+                            </small>
+                          </div>
+                        ))
+                      ) : peer?.status === "RUNNING" && peer.addresses.length > 0 ? (
                         peer.addresses.map((address) => (
                           <code key={address}>
                             {address}:{peer.port}
                           </code>
                         ))
                       ) : (
-                        <small>Start your peer to see addresses.</small>
+                        <small>Start your peer to inspect its network interfaces.</small>
                       )}
                     </div>
+                    <small className="hint">
+                      Choose Wi-Fi/Ethernet for another device on the same LAN,
+                      a VM bridge for a guest VM, or Tailscale/VPN only when both
+                      devices are on the same authorized VPN. A 100.64/10 CGNAT
+                      address is not a normal LAN address. Docker/container
+                      bridge addresses are usually not right for a separate device.
+                    </small>
                   </div>
                 </article>
                 <article className="surface" id="connect-device">
