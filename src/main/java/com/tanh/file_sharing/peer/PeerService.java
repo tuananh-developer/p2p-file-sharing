@@ -823,6 +823,7 @@ public final class PeerService implements AutoCloseable {
                 : List.of();
         List<String> addresses = networkAddresses.stream()
                 .map(NetworkAddressSnapshot::address)
+                .distinct()
                 .toList();
         return new PeerSnapshot(peerId, status, bindAddress, listeningPort, addresses, networkAddresses);
     }
