@@ -1,0 +1,127 @@
+@startuml P2P_File_Sharing_Use_Case
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam actorStyle awesome
+
+actor "Người dùng cục bộ" as User
+actor "Peer từ xa\n(instance ứng dụng khác)" as RemotePeer
+actor "Signaling Server" as Signaling
+actor "Dịch vụ ICE\n(STUN/TURN)" as IceService
+
+rectangle "P2P File Sharing Desktop Application\n(một instance ứng dụng)" {
+
+  package "A. Quản lý peer và bảo mật LAN" {
+    usecase "UC-01\nKhởi chạy peer" as UC01
+    usecase "UC-02\nDừng peer" as UC02
+    usecase "UC-03\nKết nối peer" as UC03
+    usecase "UC-04\nNgắt kết nối peer" as UC04
+    usecase "UC-12\nChấp nhận kết nối đến" as UC12
+    usecase "UC-13\nQuản lý fingerprint\npeer tin cậy" as UC13
+  }
+
+  package "B. Chia sẻ và truyền tệp LAN" {
+    usecase "UC-05\nChọn thư mục chia sẻ" as UC05
+    usecase "UC-06\nXem/tìm kiếm tập tin" as UC06
+    usecase "UC-06a\nLấy danh sách tập tin\ntừ peer" as UC06a
+    usecase "UC-07\nTải tập tin qua LAN" as UC07
+    usecase "UC-07a\nKiểm tra tính toàn vẹn" as UC07a
+    usecase "UC-08\nCung cấp tập tin\ncho peer" as UC08
+    usecase "UC-10\nTiếp tục tải LAN\nbị gián đoạn" as UC10
+    usecase "UC-11\nTải tập tin từ\nnhiều peer" as UC11
+  }
+
+  package "C. Theo dõi và quản lý tác vụ" {
+    usecase "UC-09\nTheo dõi nhật ký\nhoạt động" as UC09
+    usecase "UC-19\nHủy tác vụ\ntruyền tập tin" as UC19
+  }
+
+  package "D. Chia sẻ và truyền tệp Internet" {
+    usecase "UC-14\nTạo lời mời kết nối\nInternet" as UC14
+    usecase "UC-15\nTham gia lời mời\nkết nối Internet" as UC15
+    usecase "UC-16\nXác nhận mã an toàn\ncủa peer Internet" as UC16
+    usecase "UC-17\nGửi tập tin\nqua Internet" as UC17
+    usecase "UC-18\nTiếp nhận tập tin\nqua Internet" as UC18
+    usecase "UC-20\nĐóng phiên kết nối\nInternet" as UC20
+  }
+}
+
+' Người dùng thao tác trên instance hiện tại
+User -- UC01
+User -- UC02
+User -- UC03
+User -- UC04
+User -- UC05
+User -- UC06
+User -- UC07
+User -- UC09
+User -- UC10
+User -- UC11
+User -- UC13
+User -- UC14
+User -- UC15
+User -- UC16
+User -- UC17
+User -- UC18
+User -- UC19
+User -- UC20
+
+' Peer từ xa là một instance ứng dụng nằm ngoài boundary hiện tại
+RemotePeer -- UC03
+RemotePeer -- UC04
+RemotePeer -- UC06a
+RemotePeer -- UC07
+RemotePeer -- UC08
+RemotePeer -- UC10
+RemotePeer -- UC11
+RemotePeer -- UC12
+RemotePeer -- UC15
+RemotePeer -- UC16
+RemotePeer -- UC17
+RemotePeer -- UC18
+RemotePeer -- UC19
+RemotePeer -- UC20
+
+' Các dịch vụ bên ngoài hỗ trợ WebRTC
+Signaling -- UC14
+Signaling -- UC15
+IceService -- UC14
+IceService -- UC15
+
+' Quan hệ bắt buộc và luồng mở rộng
+UC06 ..> UC06a : <<include>>
+UC07 ..> UC07a : <<include>>
+UC18 ..> UC07a : <<include>>
+
+UC10 ..> UC07 : <<extend>>
+UC11 ..> UC07 : <<extend>>
+UC19 ..> UC07 : <<extend>>
+UC19 ..> UC17 : <<extend>>
+UC19 ..> UC18 : <<extend>>
+
+note bottom of User
+  Một người dùng có thể vừa gửi
+  vừa nhận tập tin tùy phiên.
+end note
+
+note bottom of Signaling
+  Chỉ chuyển tiếp thông tin tạo/tham gia phòng
+  và signaling; không chuyển nội dung tệp.
+end note
+
+note bottom of IceService
+  STUN/TURN hỗ trợ ICE tìm đường truyền.
+  TURN relay chỉ dùng khi có cấu hình khả dụng.
+end note
+
+note bottom of UC10
+  Resume LAN dựa trên .part và .part.resume.
+end note
+
+note bottom of UC18
+  Internet receive có checkpoint.
+  Close session giữ dữ liệu đã checkpoint;
+  Cancel chủ động xóa dữ liệu tạm.
+end note
+
+@enduml
