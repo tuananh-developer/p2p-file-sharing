@@ -1,0 +1,98 @@
+%% Use Case overview for P2P File Sharing Desktop Application
+%% This is a high-level diagram. Detailed UC-01..UC-20 specifications remain in
+%% docs/P2P_File_Sharing_Use_Case_Analysis.md.
+
+flowchart LR
+
+    %% External actors and services
+    User["👤 Người dùng cục bộ"]
+    RemotePeer["👤 Peer từ xa"]
+    Signaling["Signaling Server"]
+    ICE["Dịch vụ ICE<br/>(STUN / TURN)"]
+
+    %% System boundary
+    subgraph APP["P2P FILE SHARING DESKTOP APPLICATION"]
+        direction TB
+
+        subgraph LAN["1. QUẢN LÝ PEER VÀ CHIA SẺ FILE LAN"]
+            direction LR
+            ManagePeer(["Quản lý kết nối Peer"])
+            TrustedPeer(["Quản lý Peer tin cậy"])
+            SharedFolder(["Quản lý thư mục chia sẻ"])
+            BrowseFiles(["Xem và tìm kiếm tập tin"])
+            DownloadLAN(["Tải tập tin qua LAN"])
+            ServeFiles(["Cung cấp tập tin cho Peer"])
+        end
+
+        subgraph TASKS["2. QUẢN LÝ TÁC VỤ"]
+            direction LR
+            ManageTransfers(["Theo dõi và quản lý<br/>tác vụ truyền tập tin"])
+        end
+
+        subgraph INTERNET["3. CHIA SẺ FILE QUA INTERNET"]
+            direction LR
+            CreateInvite(["Tạo lời mời kết nối"])
+            JoinInvite(["Tham gia lời mời kết nối"])
+            ConfirmPeer(["Xác nhận mã an toàn"])
+            SendFile(["Gửi tập tin qua Internet"])
+            ReceiveFile(["Nhận tập tin qua Internet"])
+            CloseSession(["Đóng phiên kết nối"])
+        end
+    end
+
+    %% Local user interactions
+    User --- ManagePeer
+    User --- TrustedPeer
+    User --- SharedFolder
+    User --- BrowseFiles
+    User --- DownloadLAN
+    User --- ManageTransfers
+
+    User --- CreateInvite
+    User --- JoinInvite
+    User --- ConfirmPeer
+    User --- SendFile
+    User --- ReceiveFile
+    User --- CloseSession
+
+    %% Remote peer interactions
+    RemotePeer --- ManagePeer
+    RemotePeer --- BrowseFiles
+    RemotePeer --- DownloadLAN
+    RemotePeer --- ServeFiles
+    RemotePeer --- JoinInvite
+    RemotePeer --- ConfirmPeer
+    RemotePeer --- SendFile
+    RemotePeer --- ReceiveFile
+    RemotePeer --- CloseSession
+
+    %% External services used for Internet session setup
+    Signaling --- CreateInvite
+    Signaling --- JoinInvite
+    ICE --- CreateInvite
+    ICE --- JoinInvite
+
+    %% Notes: details intentionally grouped in this overview
+    DownloadNote["Tải LAN bao gồm tải đơn nguồn / đa nguồn,<br/>tiếp tục tải và kiểm tra SHA-256."]
+    PeerNote["Quản lý kết nối bao gồm khởi chạy, dừng,<br/>kết nối, ngắt kết nối và chấp nhận kết nối đến."]
+    TaskNote["Quản lý tác vụ bao gồm theo dõi nhật ký<br/>và hủy tác vụ truyền tập tin."]
+    
+    DownloadNote -.-> DownloadLAN
+    PeerNote -.-> ManagePeer
+    TaskNote -.-> ManageTransfers
+
+    %% Visual styles
+    classDef actor fill:#fff7ed,stroke:#c2410c,stroke-width:2px,color:#7c2d12;
+    classDef service fill:#f1f5f9,stroke:#475569,stroke-width:1.5px,color:#1e293b;
+    classDef usecase fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+    classDef note fill:#fffbeb,stroke:#d97706,stroke-dasharray:4 3,color:#78350f;
+
+    class User,RemotePeer actor;
+    class Signaling,ICE service;
+    class ManagePeer,TrustedPeer,SharedFolder,BrowseFiles,DownloadLAN,ServeFiles,ManageTransfers,CreateInvite,JoinInvite,ConfirmPeer,SendFile,ReceiveFile,CloseSession usecase;
+    class DownloadNote,PeerNote,TaskNote note;
+
+    style APP fill:#ffffff,stroke:#334155,stroke-width:2px
+    style LAN fill:#eff6ff,stroke:#3b82f6,stroke-width:1.5px
+    style TASKS fill:#fffbeb,stroke:#d97706,stroke-width:1.5px
+    style INTERNET fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px
