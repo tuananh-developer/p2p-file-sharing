@@ -1,0 +1,111 @@
+@startuml P2P_File_Sharing_Use_Case
+left to right direction
+
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam nodesep 35
+skinparam ranksep 45
+
+skinparam usecase {
+  BackgroundColor #EFF6FF
+  BorderColor #2563EB
+  FontColor #1E3A8A
+}
+skinparam package {
+  BorderColor #64748B
+  FontColor #0F172A
+}
+skinparam rectangle {
+  BorderColor #334155
+  BackgroundColor #FFFFFF
+}
+skinparam actor {
+  BorderColor #C2410C
+  FontColor #7C2D12
+}
+
+actor "Người dùng cục bộ" as User
+actor "Peer từ xa\n(instance ứng dụng khác)" as RemotePeer
+actor "Signaling Server" as Signaling
+actor "Dịch vụ ICE\n(STUN / TURN)" as IceService
+
+rectangle "P2P File Sharing Desktop Application\n(một instance ứng dụng)" as System {
+
+  package "1. Quản lý Peer và chia sẻ file LAN" {
+    usecase "Quản lý kết nối Peer" as ManagePeer
+    usecase "Quản lý Peer tin cậy" as TrustedPeer
+    usecase "Quản lý thư mục chia sẻ" as SharedFolder
+    usecase "Xem và tìm kiếm tập tin" as BrowseFiles
+    usecase "Tải tập tin qua LAN" as DownloadLAN
+    usecase "Cung cấp tập tin cho Peer" as ServeFiles
+  }
+
+  package "2. Quản lý tác vụ" {
+    usecase "Theo dõi và quản lý\ntác vụ truyền tập tin" as ManageTransfers
+  }
+
+  package "3. Chia sẻ file qua Internet" {
+    usecase "Tạo lời mời kết nối" as CreateInvite
+    usecase "Tham gia lời mời kết nối" as JoinInvite
+    usecase "Xác nhận mã an toàn" as ConfirmPeer
+    usecase "Gửi tập tin qua Internet" as SendFile
+    usecase "Nhận tập tin qua Internet" as ReceiveFile
+    usecase "Đóng phiên kết nối" as CloseSession
+  }
+}
+
+' Người dùng thao tác trên instance hiện tại
+User -- ManagePeer
+User -- TrustedPeer
+User -- SharedFolder
+User -- BrowseFiles
+User -- DownloadLAN
+User -- ManageTransfers
+User -- CreateInvite
+User -- JoinInvite
+User -- ConfirmPeer
+User -- SendFile
+User -- ReceiveFile
+User -- CloseSession
+
+' Peer từ xa tương tác với instance hiện tại
+RemotePeer -- ManagePeer
+RemotePeer -- BrowseFiles
+RemotePeer -- DownloadLAN
+RemotePeer -- ServeFiles
+RemotePeer -- JoinInvite
+RemotePeer -- ConfirmPeer
+RemotePeer -- SendFile
+RemotePeer -- ReceiveFile
+RemotePeer -- CloseSession
+
+' Dịch vụ bên ngoài hỗ trợ thiết lập phiên Internet
+Signaling -- CreateInvite
+Signaling -- JoinInvite
+IceService -- CreateInvite
+IceService -- JoinInvite
+
+' Các chức năng chi tiết được gộp trong sơ đồ tổng quan
+note right of ManagePeer
+  Bao gồm khởi chạy, dừng, kết nối,
+  ngắt kết nối và chấp nhận kết nối đến.
+end note
+
+note right of DownloadLAN
+  Bao gồm tải đơn nguồn, tải đa nguồn,
+  tiếp tục tải và kiểm tra SHA-256.
+end note
+
+note right of ManageTransfers
+  Bao gồm theo dõi nhật ký hoạt động
+  và hủy tác vụ truyền tập tin.
+end note
+
+note bottom of System
+  Sơ đồ tổng quan đã gom nhóm chức năng.
+  Đặc tả chi tiết UC-01 đến UC-20 được giữ
+  trong docs/P2P_File_Sharing_Use_Case_Analysis.md.
+end note
+
+@enduml
